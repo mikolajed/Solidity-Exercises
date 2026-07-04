@@ -37,3 +37,11 @@ In the ERC20 token standard, the `decimals` function defines the number of decim
 
 ## 12. Address Zero and Token Burning
 In ERC20 and other token standards, you should generally prevent transferring tokens directly to the zero address (`address(0)`). While this is often used as a mechanism to "burn" tokens (removing them from circulation permanently), a standard transfer to `address(0)` does not automatically decrease the contract's `totalSupply` state variable. To correctly burn tokens, the contract should have a dedicated `burn` function that deducts the balance from the sender and intentionally decreases `totalSupply` to ensure the overall tracking of tokens remains accurate.
+
+## 13. ABI Encoding & Decoding Functions
+Solidity provides several built-in functions under `abi` for converting variables to raw bytes and vice versa, especially useful when making low-level calls or interacting with external contracts:
+
+- **`abi.encode(...)`**: Standard ABI encoding. Takes any number of arguments of any type and encodes them into `bytes`, padding each variable to 32-byte slots per the ABI specification.
+- **`abi.decode(bytes data, (types...))`**: Reverses `abi.encode`. Decodes raw `bytes` data back into a tuple of specific types (e.g., `(string memory, uint256)`).
+- **`abi.encodeWithSignature("funcName(type1,type2)", arg1, arg2)`**: Takes a function signature as a raw string (without spaces or variable names, e.g., `"transfer(address,uint256)"`), derives its 4-byte function selector via `bytes4(keccak256(...))`, and prepends it to the ABI-encoded parameters.
+- **`abi.encodeWithSelector(bytes4 selector, arg1, arg2)`**: Functions identically to `encodeWithSignature`, but accepts the 4-byte function selector directly (e.g., `IERC20.transfer.selector` or `bytes4(keccak256("transfer(address,uint256)"))`). This is preferred as it avoids typos in string signatures at compile time.
