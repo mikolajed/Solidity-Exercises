@@ -26,7 +26,7 @@ contract SkillsCoin is ERC20 {
 
     // Mint to the caller
     function mint(uint256 amount) public {
-        // your code here
+        _mint(msg.sender, amount);
     }
 }
 
@@ -38,11 +38,15 @@ contract RareCoin is ERC20 {
     }
 
     function trade(uint256 amount) public {
-        // some code
-        // you can pass the address of the deployed SkillsCoin contract as a parameter to the constructor of the RareCoin contract as 'source'
-        // (bool ok, bytes memory result) = source.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", msg.sender, address(this), amount));
-        // this will fail if there is insufficient approval or balance
-        // require(ok, "call failed");
-        // more code
+        (bool ok, ) = address(skillsCoin).call(
+            abi.encodeWithSignature(
+                "transferFrom(address,address,uint256)", 
+                msg.sender, 
+                address(this), 
+                amount
+            )
+        );
+        require(ok, "call failed");
+        _mint(msg.sender, amount);
     }
 }
