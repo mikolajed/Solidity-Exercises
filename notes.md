@@ -94,3 +94,12 @@ Solidity provides several built-in global variables and units that are particula
 - **`block.timestamp`**: Returns the current block's timestamp as seconds since the Unix epoch. It's the standard way to handle time in smart contracts (e.g., locking funds until a certain date). Note that miners/validators have slight leeway in manipulating this value (by a few seconds), so it shouldn't be used as a strict source of randomness.
 - **`block.number`**: Returns the current block's height (the number of the block). This is often used for governance voting periods or to prevent a function from being executed multiple times within the exact same block.
 - **Time Units**: Solidity natively supports time suffixes such as `seconds`, `minutes`, `hours`, `days`, and `weeks`. When you use these suffixes after a literal number, they automatically multiply the number by the corresponding amount of seconds.
+
+## 17. Events and Indexing
+
+Events in Solidity are used to log information to the blockchain in a gas-efficient way. They are primarily designed for **off-chain retrieval**, enabling frontend applications (like dApps) to easily search and listen for specific contract actions without having to constantly query the contract state.
+
+- **Not Strictly Necessary for On-Chain Logic**: Smart contracts cannot read event logs. Events don't affect state; they are purely for external applications to monitor what happened.
+- **Indexing Parameters**: You can add the `indexed` keyword to up to **3 parameters** in an event. This allows external apps to filter logs based on those specific parameters (e.g., finding all `Transfer` events where `to == myAddress`).
+- **Standard Specifications**: While optional for custom logic, established token standards (like ERC20, ERC721) strictly *require* specific events to be emitted. For instance, the ERC20 standard requires emitting a `Transfer(address indexed from, address indexed to, uint256 value)` event on all transfers.
+- **`address(0)` in Events**: When logging the creation of new tokens (minting), standard convention dictates setting the `from` address as `address(0)`. This visually signifies to off-chain observers that the token "came from nothing" and was newly minted into circulation. Similarly, burning tokens emits a transfer to `address(0)`.
