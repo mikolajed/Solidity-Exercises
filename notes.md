@@ -77,3 +77,11 @@ This approach operates on raw bytes and bypasses type checking. It should be use
 - **Sending ETH**: Using `target.call{value: amount}("")` is the standard way to send Ether.
 - **Handling Graceful Failures**: `.call()` returns a boolean `(bool success, bytes memory data)`. It does not automatically revert if the call fails, allowing you to catch the failure and continue execution (e.g., trying optional features).
 - **Unknown ABIs**: When building generic proxy contracts or interacting with contracts whose interfaces are not known at compile time.
+
+## 15. Sending Ether: `.transfer` vs `.call` and `payable`
+
+In Solidity, to send Ether to an address, that address must be explicitly cast to `payable` (e.g., `payable(msg.sender)`). If an address is not marked as `payable`, the compiler will prevent you from sending funds to it.
+
+There are two common ways to send Ether:
+- **`payable(addr).transfer(amount)`**: This is the older, simpler method. It automatically reverts the transaction if the transfer fails. However, it imposes a strict 2300 gas limit on the receiving contract's fallback/receive function, which can break if the receiver contains complex logic or if EVM gas costs change.
+- **`addr.call{value: amount}("")`**: This is the modern, recommended approach for sending Ether. It forwards all available gas to the recipient, allowing for complex execution. It returns a boolean indicating success (`(bool success, ) = addr.call...`) and does *not* automatically revert if the transfer fails, meaning you must manually check the `success` value (or explicitly ignore it) to handle failures appropriately.
