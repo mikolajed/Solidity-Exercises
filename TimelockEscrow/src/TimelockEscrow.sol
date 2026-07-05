@@ -14,32 +14,38 @@ contract TimelockEscrow {
         seller = msg.sender;
     }
 
-    
-    /**
-     * creates a buy order between msg.sender and seller
-     * escrows msg.value for 3 days which buyer can withdraw at anytime before 3 days but afterwhich only seller can withdraw
-     * should revert if an active escrow still exist or last escrow hasn't been withdrawn
-     */
+    struct Escrow {
+        uint256 amount;
+        uint256 lockedUntil;
+    }
+    mapping(address => Escrow) public escrows;
+
     function createBuyOrder() external payable {
-        // your code here
+        require(escrows[msg.sender].amount == 0, "Active escrow exists");
+        escrows[msg.sender] = Escrow({
+            amount: msg.value,
+            lockedUntil: block.timestamp + 3 days
+        });
     }
 
-    /**
-     * allows seller to withdraw after 3 days of the escrow with @param buyer has passed
-     */
     function sellerWithdraw(address buyer) external {
-        // your code here
+        require(msg.sender == seller, "Only seller");
+        Escrow memory escrow = escrows[buyer];
+        require(escrow.amount > 0, "No active escrow");
+        require(block.timestamp >= escrow.lockedUntil, "Still locked");
+        delete escrows[buyer];
+        payable(seller).transfer(escrow.amount);
     }
 
-    /**
-     * allows buyer to withdraw at anytime before the end of the escrow (3 days)
-     */
     function buyerWithdraw() external {
-        // your code here
+        Escrow memory escrow = escrows[msg.sender];
+        require(escrow.amount > 0, "No active escrow");
+        require(block.timestamp < escrow.lockedUntil, "Lock expired");
+        delete escrows[msg.sender];
+        payable(msg.sender).transfer(escrow.amount);
     }
 
-    // returns the escrowed amount of @param buyer
     function buyerDeposit(address buyer) external view returns (uint256) {
-        // your code here
+        return escrows[buyer].amount;
     }
 }

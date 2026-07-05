@@ -22,7 +22,14 @@ contract ReducingPayout {
     }
 
     function withdraw() public {
-        // your code here
+        uint256 timePassed = block.timestamp - depositedTime;
+        if (timePassed > 86400) {
+            timePassed = 86400;
+        }
+        uint256 amount = (1 ether * (86400 - timePassed)) / 86400;
+        if (amount > 0) {
+            payable(msg.sender).transfer(amount);
+        }
     }
 }
 

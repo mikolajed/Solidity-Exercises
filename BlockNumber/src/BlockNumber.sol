@@ -9,9 +9,12 @@ contract BlockNumber {
      * To pass the test, it needs a storage variable that stores the last blocknumber where it was accessed.
      */
 
+    uint256 public lastBlock;
     address public lastCaller;
 
     function callMe() external {
-        /// your code here
+        require(block.number > lastBlock, "Already called in this block");
+        lastBlock = block.number;
+        lastCaller = msg.sender;
     }
 }

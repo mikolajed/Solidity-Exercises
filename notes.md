@@ -83,5 +83,14 @@ This approach operates on raw bytes and bypasses type checking. It should be use
 In Solidity, to send Ether to an address, that address must be explicitly cast to `payable` (e.g., `payable(msg.sender)`). If an address is not marked as `payable`, the compiler will prevent you from sending funds to it.
 
 There are two common ways to send Ether:
+
 - **`payable(addr).transfer(amount)`**: This is the older, simpler method. It automatically reverts the transaction if the transfer fails. However, it imposes a strict 2300 gas limit on the receiving contract's fallback/receive function, which can break if the receiver contains complex logic or if EVM gas costs change.
-- **`addr.call{value: amount}("")`**: This is the modern, recommended approach for sending Ether. It forwards all available gas to the recipient, allowing for complex execution. It returns a boolean indicating success (`(bool success, ) = addr.call...`) and does *not* automatically revert if the transfer fails, meaning you must manually check the `success` value (or explicitly ignore it) to handle failures appropriately.
+- **`addr.call{value: amount}("")`**: This is the modern, recommended approach for sending Ether. It forwards all available gas to the recipient, allowing for complex execution. It returns a boolean indicating success (`(bool success, ) = addr.call...`) and does _not_ automatically revert if the transfer fails, meaning you must manually check the `success` value (or explicitly ignore it) to handle failures appropriately.
+
+## 16. Global Variables and Time Units
+
+Solidity provides several built-in global variables and units that are particularly useful for time-locked and block-based logic:
+
+- **`block.timestamp`**: Returns the current block's timestamp as seconds since the Unix epoch. It's the standard way to handle time in smart contracts (e.g., locking funds until a certain date). Note that miners/validators have slight leeway in manipulating this value (by a few seconds), so it shouldn't be used as a strict source of randomness.
+- **`block.number`**: Returns the current block's height (the number of the block). This is often used for governance voting periods or to prevent a function from being executed multiple times within the exact same block.
+- **Time Units**: Solidity natively supports time suffixes such as `seconds`, `minutes`, `hours`, `days`, and `weeks`. When you use these suffixes after a literal number, they automatically multiply the number by the corresponding amount of seconds.
