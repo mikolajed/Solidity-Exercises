@@ -18,6 +18,7 @@ contract Super is HelloWorld {
     function greetings() public pure override returns (string memory) {
         return "Hi there!";
     }
-
-    // your code here
+    function getGreetings() public pure returns (string memory) {
+        return super.greetings();
+    }
 }

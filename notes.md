@@ -103,3 +103,10 @@ Events in Solidity are used to log information to the blockchain in a gas-effici
 - **Indexing Parameters**: You can add the `indexed` keyword to up to **3 parameters** in an event. This allows external apps to filter logs based on those specific parameters (e.g., finding all `Transfer` events where `to == myAddress`).
 - **Standard Specifications**: While optional for custom logic, established token standards (like ERC20, ERC721) strictly *require* specific events to be emitted. For instance, the ERC20 standard requires emitting a `Transfer(address indexed from, address indexed to, uint256 value)` event on all transfers.
 - **`address(0)` in Events**: When logging the creation of new tokens (minting), standard convention dictates setting the `from` address as `address(0)`. This visually signifies to off-chain observers that the token "came from nothing" and was newly minted into circulation. Similarly, burning tokens emits a transfer to `address(0)`.
+
+## 18. Inheritance
+
+- **Multiple Inheritance**: A contract can inherit multiple parents: `contract Child is Parent1, Parent2 { ... }`. Order matters (base to derived).
+- **`virtual` & `override`**: A parent marks a function `virtual` to allow it to be replaced. The child uses `override` when replacing it.
+- **`super`**: Use `super.funcName()` inside a child contract to execute the parent's version of that function.
+- **`private` vs `internal`**: `private` means access is restricted strictly to the defining contract. `internal` allows access in the defining contract *and* any child contracts (like `protected` in C++/Java).
