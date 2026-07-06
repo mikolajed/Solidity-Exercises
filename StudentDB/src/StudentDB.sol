@@ -19,11 +19,11 @@ contract StudentDB {
 
     // create Student's data
     function createStudent(string memory _name, uint256 _age) public {
-        // your code here
+        student = Student(_name, _age);
     }
 
     // return struct data
     function getEntireStruct() public view returns (Student memory) {
-        // your code here
+        return student;
     }
 }
