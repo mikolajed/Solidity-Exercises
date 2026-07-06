@@ -110,3 +110,13 @@ Events in Solidity are used to log information to the blockchain in a gas-effici
 - **`virtual` & `override`**: A parent marks a function `virtual` to allow it to be replaced. The child uses `override` when replacing it.
 - **`super`**: Use `super.funcName()` inside a child contract to execute the parent's version of that function.
 - **`private` vs `internal`**: `private` means access is restricted strictly to the defining contract. `internal` allows access in the defining contract *and* any child contracts (like `protected` in C++/Java).
+
+## 19. Strings and Characters
+
+Working with strings in Solidity requires understanding how they are represented under the hood.
+
+- **String Concatenation**: You can natively combine strings using `string.concat(stringA, stringB)`.
+- **Accessing Characters**: Solidity does not have a native `charAt()` method or direct indexing for strings (e.g., `myString[0]` will not compile). To access individual characters, you must first convert the string to a byte array: `bytes(myString)[0]`.
+- **Encoding Warning**: **Be extremely careful when indexing.** Strings in Solidity are strictly UTF-8 encoded. Standard ASCII characters take up 1 byte, but special characters (like accents or emojis) can take 2-4 bytes. Therefore, `bytes(myString)[3]` gives you the 4th *byte*, which is not necessarily the 4th *character*.
+- **`unicode` Keyword**: If you want to use special characters or emojis in a string literal, prefix the string with `unicode`. Example: `string memory a = unicode"Hello 🌍";`
+- **`hex` Keyword**: You can define raw byte data using hex literals by prefixing a string with `hex`. Example: `bytes memory b = hex"0A1B2C";`
