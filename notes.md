@@ -101,7 +101,7 @@ Events in Solidity are used to log information to the blockchain in a gas-effici
 
 - **Not Strictly Necessary for On-Chain Logic**: Smart contracts cannot read event logs. Events don't affect state; they are purely for external applications to monitor what happened.
 - **Indexing Parameters**: You can add the `indexed` keyword to up to **3 parameters** in an event. This allows external apps to filter logs based on those specific parameters (e.g., finding all `Transfer` events where `to == myAddress`).
-- **Standard Specifications**: While optional for custom logic, established token standards (like ERC20, ERC721) strictly *require* specific events to be emitted. For instance, the ERC20 standard requires emitting a `Transfer(address indexed from, address indexed to, uint256 value)` event on all transfers.
+- **Standard Specifications**: While optional for custom logic, established token standards (like ERC20, ERC721) strictly _require_ specific events to be emitted. For instance, the ERC20 standard requires emitting a `Transfer(address indexed from, address indexed to, uint256 value)` event on all transfers.
 - **`address(0)` in Events**: When logging the creation of new tokens (minting), standard convention dictates setting the `from` address as `address(0)`. This visually signifies to off-chain observers that the token "came from nothing" and was newly minted into circulation. Similarly, burning tokens emits a transfer to `address(0)`.
 
 ## 18. Inheritance
@@ -109,7 +109,7 @@ Events in Solidity are used to log information to the blockchain in a gas-effici
 - **Multiple Inheritance**: A contract can inherit multiple parents: `contract Child is Parent1, Parent2 { ... }`. Order matters (base to derived).
 - **`virtual` & `override`**: A parent marks a function `virtual` to allow it to be replaced. The child uses `override` when replacing it.
 - **`super`**: Use `super.funcName()` inside a child contract to execute the parent's version of that function.
-- **`private` vs `internal`**: `private` means access is restricted strictly to the defining contract. `internal` allows access in the defining contract *and* any child contracts (like `protected` in C++/Java).
+- **`private` vs `internal`**: `private` means access is restricted strictly to the defining contract. `internal` allows access in the defining contract _and_ any child contracts (like `protected` in C++/Java).
 
 ## 19. Strings and Characters
 
@@ -117,6 +117,21 @@ Working with strings in Solidity requires understanding how they are represented
 
 - **String Concatenation**: You can natively combine strings using `string.concat(stringA, stringB)`.
 - **Accessing Characters**: Solidity does not have a native `charAt()` method or direct indexing for strings (e.g., `myString[0]` will not compile). To access individual characters, you must first convert the string to a byte array: `bytes(myString)[0]`.
-- **Encoding Warning**: **Be extremely careful when indexing.** Strings in Solidity are strictly UTF-8 encoded. Standard ASCII characters take up 1 byte, but special characters (like accents or emojis) can take 2-4 bytes. Therefore, `bytes(myString)[3]` gives you the 4th *byte*, which is not necessarily the 4th *character*.
+- **Encoding Warning**: **Be extremely careful when indexing.** Strings in Solidity are strictly UTF-8 encoded. Standard ASCII characters take up 1 byte, but special characters (like accents or emojis) can take 2-4 bytes. Therefore, `bytes(myString)[3]` gives you the 4th _byte_, which is not necessarily the 4th _character_.
 - **`unicode` Keyword**: If you want to use special characters or emojis in a string literal, prefix the string with `unicode`. Example: `string memory a = unicode"Hello 🌍";`
 - **`hex` Keyword**: You can define raw byte data using hex literals by prefixing a string with `hex`. Example: `bytes memory b = hex"0A1B2C";`
+
+## 20. Testing with Foundry
+
+Foundry provides powerful cheatcodes via the `vm` object to manipulate EVM state and thoroughly test smart contracts.
+
+- **`vm.prank(address)`**: Sets `msg.sender` to the specified address for the _very next_ call.
+- **`vm.startPrank(address)` / `vm.stopPrank()`**: Sets `msg.sender` for _all_ subsequent calls until `stopPrank()` is called.
+- **Asserts**: Use `assertEq(a, b)` for equality checking, `assertTrue(condition)` for booleans, and `assertApproxEqAbs(a, b, delta)` for values that might differ slightly due to rounding (useful in time/math calculations).
+- **`vm.expectRevert()`**: Asserts that the _very next_ call must revert. You can pass a string message `vm.expectRevert("Unauthorized")` or a custom error selector `vm.expectRevert(CustomError.selector)`.
+- **Testing Events (`vm.expectEmit`)**: To test events, you must tell the VM to start tracking emissions with `vm.expectEmit()`. Crucially, you must declare the event in your test contract, manually `emit` the expected event, and _then_ make the actual contract call that triggers the real event.
+- **`vm.warp(uint256)`**: Sets `block.timestamp` to a specific value. Essential for testing time-locks and delays.
+- **`vm.roll(uint256)`**: Sets `block.number` to a specific value. Essential for testing block-based logic.
+- **`vm.deal(address, uint256)`**: Instantly sets the ETH balance of an address (creating ETH out of thin air).
+- **`vm.hoax(address, uint256)`**: A convenient shortcut that combines `vm.deal` and `vm.prank`. It funds the address with ETH and sets it as the `msg.sender` for the next call.
+- **`vm.assume(condition)` & Fuzzing**: Used in fuzz tests (where Foundry passes random parameters to your test functions). Calling `vm.assume(x > 0)` tells the fuzzer to discard any generated inputs where `x` is not greater than 0, ensuring the test only runs against valid constraints.
