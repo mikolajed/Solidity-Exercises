@@ -72,72 +72,72 @@ require(accountHash == keccak256("") || accountHash == bytes32(0), "Caller is a 
 
 - **Multiple Tokens, One Contract**: ERC1155 is a standard that allows a single smart contract to manage multiple different token types simultaneously (fungible, non-fungible, or semi-fungible).
 - **Token IDs**: Because the contract manages multiple distinct tokens, every core function (like transferring or checking balances) must explicitly specify the `id` of the token you are interacting with, in addition to the `amount`.
-  - **ID Structure**: The standard only dictates that IDs must be unique; exactly how they are computed is entirely up to the contract developer. A common pattern is to split the `uint256` token ID in half: the top 128 bits represent the specific *collection* or token type, and the bottom 128 bits represent the individual *item* (like the index of an NFT within that collection).
-- **ERC1155D**: A heavily gas-optimized, backwards-compatible variant of the standard. It achieves significant gas savings but is strictly restricted to supporting only a *single* collection of NFTs per contract (sacrificing the multi-collection capability for maximum efficiency).
+  - **ID Structure**: The standard only dictates that IDs must be unique; exactly how they are computed is entirely up to the contract developer. A common pattern is to split the `uint256` token ID in half: the top 128 bits represent the specific _collection_ or token type, and the bottom 128 bits represent the individual _item_ (like the index of an NFT within that collection).
+- **ERC1155D**: A heavily gas-optimized, backwards-compatible variant of the standard. It achieves significant gas savings but is strictly restricted to supporting only a _single_ collection of NFTs per contract (sacrificing the multi-collection capability for maximum efficiency).
 
 ### Core ERC1155 Functions & Concepts
 
 - **`balanceOf`**: Returns the balance of a specific `id` for a specific address.
 - **`balanceOfBatch`**: Returns the balances of multiple `id`s for multiple addresses in a single, gas-efficient call.
-- **`setApprovalForAll` / `isApprovedForAll`**: Grants or checks permission for an operator to manage *all* tokens (across all IDs) owned by the caller. (Note: ERC1155 does not have a single-token `approve` function).
-- **`safeTransferFrom`**: Securely transfers a specific `amount` of a specific `id`. **ERC1155 ONLY supports safe transfers**; if the receiving address is a smart contract, it *must* implement the `onERC1155Received` hook or the transaction reverts.
+- **`setApprovalForAll` / `isApprovedForAll`**: Grants or checks permission for an operator to manage _all_ tokens (across all IDs) owned by the caller. (Note: ERC1155 does not have a single-token `approve` function).
+- **`safeTransferFrom`**: Securely transfers a specific `amount` of a specific `id`. **ERC1155 ONLY supports safe transfers**; if the receiving address is a smart contract, it _must_ implement the `onERC1155Received` hook or the transaction reverts.
 - **`safeBatchTransferFrom`**: Securely transfers multiple `id`s and `amount`s in a single transaction (requires the receiving contract to implement `onERC1155BatchReceived`).
 - **No Token Enumeration**: The standard does not support a mechanism to list all existing token IDs on-chain. To discover all existing IDs within an ERC1155 contract, you must parse the contract's emitted transfer logs off-chain.
-- **Metadata URI**: The standard does not require ERC1155 tokens to have URI metadata associated with them. However, if an implementation does define a token's URI, it *must* point to a JSON file that conforms exactly to the official "ERC1155 Metadata URI JSON Schema":
+- **Metadata URI**: The standard does not require ERC1155 tokens to have URI metadata associated with them. However, if an implementation does define a token's URI, it _must_ point to a JSON file that conforms exactly to the official "ERC1155 Metadata URI JSON Schema":
   ```json
   {
-      "title": "Token Metadata",
-      "type": "object",
-      "properties": { 
-          "name": {
-              "type": "string",
-              "description": "Identifies the asset to which this token represents"
-          },
-          "decimals": {
-              "type": "integer",
-              "description": "The number of decimal places that the token amount should display - e.g. 18, means to divide the token amount by 1000000000000000000 to get its user representation."
-          },
-          "description": {
-              "type": "string",
-              "description": "Describes the asset to which this token represents"
-          },
-          "image": {
-              "type": "string",
-              "description": "A URI pointing to a resource with mime type image/* representing the asset to which this token represents. Consider making any images at a width between 320 and 1080 pixels and aspect ratio between 1.91:1 and 4:5 inclusive."
-          },
-          "properties": {
-              "type": "object",
-              "description": "Arbitrary properties. Values may be strings, numbers, object or arrays."
-          }
+    "title": "Token Metadata",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Identifies the asset to which this token represents"
+      },
+      "decimals": {
+        "type": "integer",
+        "description": "The number of decimal places that the token amount should display - e.g. 18, means to divide the token amount by 1000000000000000000 to get its user representation."
+      },
+      "description": {
+        "type": "string",
+        "description": "Describes the asset to which this token represents"
+      },
+      "image": {
+        "type": "string",
+        "description": "A URI pointing to a resource with mime type image/* representing the asset to which this token represents. Consider making any images at a width between 320 and 1080 pixels and aspect ratio between 1.91:1 and 4:5 inclusive."
+      },
+      "properties": {
+        "type": "object",
+        "description": "Arbitrary properties. Values may be strings, numbers, object or arrays."
       }
+    }
   }
   ```
   Additionally, the standard supports a `localization` property to serve metadata in multiple languages:
   ```json
   {
-      "title": "Token Metadata",
-      "type": "object",
-      "properties": {
-          "...": "...",
-          "localization": {
-              "type": "object",
-              "required": ["uri", "default", "locales"],
-              "properties": {
-                  "uri": {
-                      "type": "string",
-                      "description": "The URI pattern to fetch localized data from. This URI should contain the substring `{locale}` which will be replaced with the appropriate locale value before sending the request."
-                  },
-                  "default": {
-                      "type": "string",
-                      "description": "The locale of the default data within the base JSON"
-                  },
-                  "locales": {
-                      "type": "array",
-                      "description": "The list of locales for which data is available. These locales should conform to those defined in the Unicode Common Locale Data Repository (http://cldr.unicode.org/)."
-                  }
-              }
+    "title": "Token Metadata",
+    "type": "object",
+    "properties": {
+      "...": "...",
+      "localization": {
+        "type": "object",
+        "required": ["uri", "default", "locales"],
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "The URI pattern to fetch localized data from. This URI should contain the substring `{locale}` which will be replaced with the appropriate locale value before sending the request."
+          },
+          "default": {
+            "type": "string",
+            "description": "The locale of the default data within the base JSON"
+          },
+          "locales": {
+            "type": "array",
+            "description": "The list of locales for which data is available. These locales should conform to those defined in the Unicode Common Locale Data Repository (http://cldr.unicode.org/)."
           }
+        }
       }
+    }
   }
   ```
 
@@ -147,3 +147,56 @@ Solidity does not have robust native string manipulation. To convert integers (l
 
 - **`Strings.toString(uint256 value)`**: Converts a `uint256` to its ASCII string decimal representation.
 - **`Strings.toHexString(uint256 value, uint256 length)`**: Converts a `uint256` to its ASCII string hexadecimal representation. The `length` parameter specifies the number of **bytes** (not characters) to represent. For example, `Strings.toHexString(id, 32)` converts the `id` into a 64-character hex string (since 32 bytes = 64 hex characters) prefixed with `0x`. This is particularly useful when dealing with ERC1155 IDs where the 256-bit integer is split into halves.
+
+## 6. ERC4626 (Tokenized Vault Standard)
+
+- **Extension of ERC20**: The ERC4626 standard extends the ERC20 contract. During construction, an ERC4626 vault takes the address of another specific ERC20 token as an argument. This is the underlying "asset" token that users will deposit into the vault.
+- **Inherits ERC20 Functionality**: Because it extends ERC20, the ERC4626 vault itself acts as a token (representing your shares in the vault). Therefore, it natively supports all standard ERC20 functions and events, including `balanceOf`, `transfer`, `transferFrom`, `approve`, and `allowance`.
+
+### Entering the Vault
+
+- **`deposit(uint256 assets)`**: You specify how many underlying **assets** you want to put in, and the function calculates how many **shares** to mint and send back to you.
+  - **`previewDeposit(uint256 assets)`**: A view function that simulates a deposit. It returns the exact amount of shares you _would_ receive for the given assets under current market conditions (accounting for any fees/slippage).
+  - **`convertToShares(uint256 assets)`**: An "ideal" view function that simply calculates the base conversion rate from assets to shares. Unlike `previewDeposit`, it typically does _not_ account for fees or slippage.
+- **`mint(uint256 shares)`**: You specify exactly how many **shares** you want to receive, and the function calculates how much of the underlying **asset** must be transferred from you to pay for them.
+  - **`previewMint(uint256 shares)`**: A view function that simulates a mint. It returns the exact amount of assets you _would_ need to supply to receive the given amount of shares.
+
+### Exiting the Vault
+
+- **`withdraw(uint256 assets)`**: You specify how many underlying **assets** you want to pull out, and the function calculates and burns the necessary number of **shares** from you.
+  - **`previewWithdraw(uint256 assets)`**: A view function that simulates a withdrawal. It returns the exact amount of shares that _would_ be burned under current market conditions.
+- **`redeem(uint256 shares)`**: You specify exactly how many **shares** you want to burn, and the function calculates how much of the underlying **asset** to send back to you.
+  - **`previewRedeem(uint256 shares)`**: A view function that simulates a redeem. It returns the exact amount of assets you _would_ receive.
+  - **`convertToAssets(uint256 shares)`**: An "ideal" view function that simply calculates the base conversion rate from shares to assets. Unlike `previewRedeem`, it typically does _not_ account for fees or slippage.
+
+### Vault Limits
+
+Because Vaults often enforce caps or dynamic limits on how much liquidity can enter or leave at a time, the standard includes four view functions to check the absolute maximums available to a specific user:
+
+- **`maxDeposit(address receiver)`**: The maximum amount of **assets** that can be deposited for the `receiver` in a single call.
+- **`maxMint(address receiver)`**: The maximum amount of **shares** that can be minted for the `receiver` in a single call.
+- **`maxWithdraw(address owner)`**: The maximum amount of **assets** that can be withdrawn from the `owner`'s balance in a single call.
+- **`maxRedeem(address owner)`**: The maximum amount of **shares** that can be redeemed from the `owner`'s balance in a single call.
+
+### Slippage Protection
+
+Whenever you "swap" tokens (such as exchanging assets for vault shares, or vice versa), you are vulnerable to **slippage**—the risk that the conversion rate changes unfavorably before your transaction is mined. A standard defense against this is to calculate the minimum expected return off-chain and pass it into your function as a tolerance parameter (e.g., `minAmountOut`). The contract will check the final output, and if it falls below your minimum tolerance, it intentionally reverts the entire transaction.
+
+### The Inflation Attack (Donation Attack)
+
+A classic vulnerability in early or naive ERC4626 vault implementations is the **Inflation Attack**.
+
+- **The Setup**: An attacker acts as the very first depositor in an empty vault, minting exactly 1 share by depositing 1 wei of the underlying asset.
+- **The Attack**: The attacker then directly transfers (donates) a massive amount of the underlying asset to the vault contract _without_ using the deposit function (meaning no new shares are minted).
+- **The Result**: Because the exchange rate is dynamically calculated as `totalAssets() / totalShares()`, this direct donation artificially inflates the value of the attacker's single share to a massive number. When a legitimate user subsequently tries to deposit normal amounts of assets, the heavily inflated ratio often causes the calculation of their shares to round down to zero due to Solidity's integer division. The attacker can then redeem their single share to steal the new user's assets.
+- **The Mitigations**: There are three primary defenses against this attack:
+  1. **Slippage Tolerance**: Revert the transaction if the shares received fall below the user's expected `minAmountOut` (as described in Slippage Protection).
+  2. **Initial "Dead" Deposit**: The deployer should deposit a sufficiently large amount of assets into the pool upon creation and permanently lock or burn those initial shares. This makes executing the inflation attack prohibitively expensive.
+  3. **Virtual Liquidity**: Modern implementations (like OpenZeppelin v4.9+) natively mitigate this by hardcoding "virtual shares" and "virtual assets" as offsets in the pricing formula, making the pool behave as if it had been deployed with enough assets.
+
+### How Virtual Liquidity Works
+
+Modern implementations (like OpenZeppelin) defeat the Inflation Attack natively by anchoring the exchange rate formula with **Virtual Liquidity**:
+- **The Formula**: Instead of `assets * (totalShares / totalAssets)`, the math is calculated as `assets * ((totalShares + virtualShares) / (totalAssets + virtualAssets))`.
+- **The Defense**: By injecting fake "virtual" assets and shares into the formula, the vault behaves as if it is never empty. If an attacker tries to donate massive amounts of assets to skew the ratio, they must overcome the massive virtual denominator, making the attack economically unviable.
+- **Why it's safe (Rounding Rules)**: Virtual liquidity never causes the contract to "overpay" users. The ERC4626 standard dictates that all conversion math must **strictly round against the user** (e.g., when depositing, shares round DOWN; when redeeming, assets round DOWN). Any microscopic precision loss from the virtual offsets is safely absorbed by the vault as "dust".
