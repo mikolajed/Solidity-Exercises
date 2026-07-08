@@ -67,3 +67,83 @@ require(accountHash == keccak256("") || accountHash == bytes32(0), "Caller is a 
 ### Library Choices
 
 - **Solady ERC721**: While OpenZeppelin is the industry standard for security and readability, if gas optimization is a primary concern, consider using the [Solady](https://github.com/Vectorized/solady) library's `ERC721` implementation. It is heavily optimized using inline assembly and offers considerable gas savings for minting, transferring, and tracking tokens.
+
+## 4. ERC1155 (Multi-Token Standard)
+
+- **Multiple Tokens, One Contract**: ERC1155 is a standard that allows a single smart contract to manage multiple different token types simultaneously (fungible, non-fungible, or semi-fungible).
+- **Token IDs**: Because the contract manages multiple distinct tokens, every core function (like transferring or checking balances) must explicitly specify the `id` of the token you are interacting with, in addition to the `amount`.
+  - **ID Structure**: The standard only dictates that IDs must be unique; exactly how they are computed is entirely up to the contract developer. A common pattern is to split the `uint256` token ID in half: the top 128 bits represent the specific *collection* or token type, and the bottom 128 bits represent the individual *item* (like the index of an NFT within that collection).
+- **ERC1155D**: A heavily gas-optimized, backwards-compatible variant of the standard. It achieves significant gas savings but is strictly restricted to supporting only a *single* collection of NFTs per contract (sacrificing the multi-collection capability for maximum efficiency).
+
+### Core ERC1155 Functions & Concepts
+
+- **`balanceOf`**: Returns the balance of a specific `id` for a specific address.
+- **`balanceOfBatch`**: Returns the balances of multiple `id`s for multiple addresses in a single, gas-efficient call.
+- **`setApprovalForAll` / `isApprovedForAll`**: Grants or checks permission for an operator to manage *all* tokens (across all IDs) owned by the caller. (Note: ERC1155 does not have a single-token `approve` function).
+- **`safeTransferFrom`**: Securely transfers a specific `amount` of a specific `id`. **ERC1155 ONLY supports safe transfers**; if the receiving address is a smart contract, it *must* implement the `onERC1155Received` hook or the transaction reverts.
+- **`safeBatchTransferFrom`**: Securely transfers multiple `id`s and `amount`s in a single transaction (requires the receiving contract to implement `onERC1155BatchReceived`).
+- **No Token Enumeration**: The standard does not support a mechanism to list all existing token IDs on-chain. To discover all existing IDs within an ERC1155 contract, you must parse the contract's emitted transfer logs off-chain.
+- **Metadata URI**: The standard does not require ERC1155 tokens to have URI metadata associated with them. However, if an implementation does define a token's URI, it *must* point to a JSON file that conforms exactly to the official "ERC1155 Metadata URI JSON Schema":
+  ```json
+  {
+      "title": "Token Metadata",
+      "type": "object",
+      "properties": { 
+          "name": {
+              "type": "string",
+              "description": "Identifies the asset to which this token represents"
+          },
+          "decimals": {
+              "type": "integer",
+              "description": "The number of decimal places that the token amount should display - e.g. 18, means to divide the token amount by 1000000000000000000 to get its user representation."
+          },
+          "description": {
+              "type": "string",
+              "description": "Describes the asset to which this token represents"
+          },
+          "image": {
+              "type": "string",
+              "description": "A URI pointing to a resource with mime type image/* representing the asset to which this token represents. Consider making any images at a width between 320 and 1080 pixels and aspect ratio between 1.91:1 and 4:5 inclusive."
+          },
+          "properties": {
+              "type": "object",
+              "description": "Arbitrary properties. Values may be strings, numbers, object or arrays."
+          }
+      }
+  }
+  ```
+  Additionally, the standard supports a `localization` property to serve metadata in multiple languages:
+  ```json
+  {
+      "title": "Token Metadata",
+      "type": "object",
+      "properties": {
+          "...": "...",
+          "localization": {
+              "type": "object",
+              "required": ["uri", "default", "locales"],
+              "properties": {
+                  "uri": {
+                      "type": "string",
+                      "description": "The URI pattern to fetch localized data from. This URI should contain the substring `{locale}` which will be replaced with the appropriate locale value before sending the request."
+                  },
+                  "default": {
+                      "type": "string",
+                      "description": "The locale of the default data within the base JSON"
+                  },
+                  "locales": {
+                      "type": "array",
+                      "description": "The list of locales for which data is available. These locales should conform to those defined in the Unicode Common Locale Data Repository (http://cldr.unicode.org/)."
+                  }
+              }
+          }
+      }
+  }
+  ```
+
+## 5. Working with Strings (OpenZeppelin)
+
+Solidity does not have robust native string manipulation. To convert integers (like Token IDs) into strings—which is almost always required when constructing a `tokenURI` or `uri` to return metadata—you should use OpenZeppelin's `Strings` library.
+
+- **`Strings.toString(uint256 value)`**: Converts a `uint256` to its ASCII string decimal representation.
+- **`Strings.toHexString(uint256 value, uint256 length)`**: Converts a `uint256` to its ASCII string hexadecimal representation. The `length` parameter specifies the number of **bytes** (not characters) to represent. For example, `Strings.toHexString(id, 32)` converts the `id` into a 64-character hex string (since 32 bytes = 64 hex characters) prefixed with `0x`. This is particularly useful when dealing with ERC1155 IDs where the 256-bit integer is split into halves.
