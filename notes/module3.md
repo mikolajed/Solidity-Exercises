@@ -200,3 +200,35 @@ Modern implementations (like OpenZeppelin) defeat the Inflation Attack natively 
 - **The Formula**: Instead of `assets * (totalShares / totalAssets)`, the math is calculated as `assets * ((totalShares + virtualShares) / (totalAssets + virtualAssets))`.
 - **The Defense**: By injecting fake "virtual" assets and shares into the formula, the vault behaves as if it is never empty. If an attacker tries to donate massive amounts of assets to skew the ratio, they must overcome the massive virtual denominator, making the attack economically unviable.
 - **Why it's safe (Rounding Rules)**: Virtual liquidity never causes the contract to "overpay" users. The ERC4626 standard dictates that all conversion math must **strictly round against the user** (e.g., when depositing, shares round DOWN; when redeeming, assets round DOWN). Any microscopic precision loss from the virtual offsets is safely absorbed by the vault as "dust".
+
+## 7. ERC721 Enumerable
+
+The ERC721 Enumerable extension enables on-chain discovery of tokens by explicitly tracking two things:
+
+1. **All the token IDs in existence**: It accomplishes this by using the internal data structures `_allTokens` and `_allTokensIndex`.
+2. **All the token IDs a specific address owns**: It accomplishes this by using the internal data structures `_ownedTokens` and `_ownedTokensIndex`.
+
+### Core Functions
+
+By maintaining these internal structures, the extension exposes three primary view functions to the public:
+
+- **`totalSupply()`**: Returns the total amount of valid NFTs currently tracked by the contract.
+- **`tokenByIndex(uint256 index)`**: Returns the token ID at a given global index. You can iterate from `0` to `totalSupply() - 1` to discover every single NFT currently in existence within the contract.
+- **`tokenOfOwnerByIndex(address owner, uint256 index)`**: Returns the token ID owned by `owner` at a given index. You can iterate from `0` to `balanceOf(owner) - 1` to discover every single NFT owned by that specific address.
+
+### Under the Hood: Swap-and-Pop
+
+When a token is transferred or burned, it must be removed from the previous owner's enumeration list. Because deleting an element from the middle of an array normally requires shifting all subsequent elements down (which is extremely gas inefficient), the internal `_removeTokenFromOwnerEnumeration()` function uses a classic **swap-and-pop** technique:
+1. It finds the exact index of the token to be removed.
+2. It takes the **last** token in the user's `_ownedTokens` array and copies (swaps) it into the index of the token being removed.
+3. It then simply deletes the very last slot of the array (popping it). 
+This keeps the array perfectly packed without gaps, and ensures the removal always executes in $O(1)$ time complexity regardless of how many tokens the user owns.
+
+### Internal State Hooks
+
+To keep the enumeration arrays perfectly in sync with actual token ownership, the extension relies on internal lifecycle functions:
+
+- **`_update(address to, uint256 tokenId, address auth)`**: In OpenZeppelin v5, this is the master internal hook that runs on every transfer, mint, and burn. The Enumerable extension overrides this `_update` function to automatically manage the enumeration arrays before passing control back to the core ERC721 transfer logic.
+- **`_addTokenToOwnerEnumeration(address to, uint256 tokenId)`**: Called during minting or transferring to simply append the new token to the end of the `to` address's `_ownedTokens` array and save its index.
+- **`_addTokenToAllTokensEnumeration(uint256 tokenId)`**: Called exclusively during minting to append the newly created token to the global `_allTokens` array and save its index.
+- **`_removeTokenFromAllTokensEnumeration(uint256 tokenId)`**: Called exclusively during burning. Just like the owner removal function, this utilizes the **swap-and-pop** technique on the global `_allTokens` array to maintain strict $O(1)$ efficiency when permanently destroying a token.
