@@ -197,6 +197,7 @@ A classic vulnerability in early or naive ERC4626 vault implementations is the *
 ### How Virtual Liquidity Works
 
 Modern implementations (like OpenZeppelin) defeat the Inflation Attack natively by anchoring the exchange rate formula with **Virtual Liquidity**:
+
 - **The Formula**: Instead of `assets * (totalShares / totalAssets)`, the math is calculated as `assets * ((totalShares + virtualShares) / (totalAssets + virtualAssets))`.
 - **The Defense**: By injecting fake "virtual" assets and shares into the formula, the vault behaves as if it is never empty. If an attacker tries to donate massive amounts of assets to skew the ratio, they must overcome the massive virtual denominator, making the attack economically unviable.
 - **Why it's safe (Rounding Rules)**: Virtual liquidity never causes the contract to "overpay" users. The ERC4626 standard dictates that all conversion math must **strictly round against the user** (e.g., when depositing, shares round DOWN; when redeeming, assets round DOWN). Any microscopic precision loss from the virtual offsets is safely absorbed by the vault as "dust".
@@ -219,10 +220,11 @@ By maintaining these internal structures, the extension exposes three primary vi
 ### Under the Hood: Swap-and-Pop
 
 When a token is transferred or burned, it must be removed from the previous owner's enumeration list. Because deleting an element from the middle of an array normally requires shifting all subsequent elements down (which is extremely gas inefficient), the internal `_removeTokenFromOwnerEnumeration()` function uses a classic **swap-and-pop** technique:
+
 1. It finds the exact index of the token to be removed.
 2. It takes the **last** token in the user's `_ownedTokens` array and copies (swaps) it into the index of the token being removed.
-3. It then simply deletes the very last slot of the array (popping it). 
-This keeps the array perfectly packed without gaps, and ensures the removal always executes in $O(1)$ time complexity regardless of how many tokens the user owns.
+3. It then simply deletes the very last slot of the array (popping it).
+   This keeps the array perfectly packed without gaps, and ensures the removal always executes in $O(1)$ time complexity regardless of how many tokens the user owns.
 
 ### Internal State Hooks
 
@@ -245,31 +247,34 @@ To keep the enumeration arrays perfectly in sync with actual token ownership, th
 - **Historical Context (Why not ERC777 or ERC223?)**: ERC1363 wasn't the first attempt at adding transfer hooks to tokens.
   - **ERC223 (May 2017)** injected the hook directly into the standard `transfer` function. This broke backwards compatibility because older smart contracts without the hook could no longer receive the token.
   - **ERC777 (Nov 2017)** used a global registry to trigger hooks on standard transfers. Because older DeFi protocols didn't expect a standard ERC20 transfer to execute an external contract call, it introduced catastrophic **reentrancy vulnerabilities** (infamously exploited in Uniswap V1).
-  ERC1363 succeeded because it isolates the hooks into brand new functions (`transferAndCall`), leaving the standard `transfer` function completely safe and untouched.
+    ERC1363 succeeded because it isolates the hooks into brand new functions (`transferAndCall`), leaving the standard `transfer` function completely safe and untouched.
 
 ## 9. Understanding the `uint256` Max Value
 
 Solidity and the EVM operate entirely on 256-bit words. Understanding the sheer scale and mechanics of these data types is critical:
 
 - **Two's Complement**: The EVM uses Two's Complement to represent signed integers (`int`). You can safely retrieve their absolute boundaries natively using `type(int256).max` and `type(int256).min`.
-- **Retrieving the Max Value**: 
+- **Retrieving the Max Value**:
   - The standard way to get the maximum value of a `uint256` is `type(uint256).max`.
   - A mathematically equivalent approach is doing a bitwise NOT on zero: **`~uint256(0)`**. This perfectly flips all 256 bits to `1`.
-  - *(Note: Using `uint256(-1)` used to be a popular hack to hit the max value via underflow, but this **doesn't work anymore** in Solidity 0.8.0+ due to built-in overflow/underflow protection).*
+  - _(Note: Using `uint256(-1)` used to be a popular hack to hit the max value via underflow, but this **doesn't work anymore** in Solidity 0.8.0+ due to built-in overflow/underflow protection)._
 - **The Astronomical Scale**: A `uint256` can hold numbers up to roughly $1.15 \times 10^{77}$. To put that sheer size into perspective: just 1,000 `uint256` variables could perfectly enumerate every single atom in the known universe.
 - **The Collision Corollary**: Because the numerical search space is so incomprehensibly massive, two randomly chosen `uint256` values (which is equivalent to the output of a `keccak256` hash) will, for all practical purposes, **never have a collision**.
 
 ## 10. Solidity Signed Integers
 
 Solidity and the EVM use **Two's Complement** representation for signed integers (`int`). Because the highest-order bit dictates the sign (0 for positive, 1 for negative), the bitwise layouts look like this (using `int8` as an example):
+
 - `int8(0)` == `0000 0000`
 - `type(int8).max` == `0111 1111`
 - `type(int8).min` == `1000 0000`
 
 ### Dedicated Signed Opcodes
+
 Because negative numbers start with a `1` at the most significant bit, they technically "appear" larger than positive numbers if evaluated as raw binary. Therefore, standard comparison operators and math functions break. Multiplication, division, modulo, right-shifting, and casting to larger sizes all require entirely different logic under the hood.
 
 To solve this, the EVM has specific opcodes exclusively for signed arithmetic:
+
 - **`slt` and `sgt`**: Signed Less Than / Signed Greater Than. They know that `1111...1111` is actually `-1`, not the max value.
 - **`sdiv` and `smod`**: Signed Division and Signed Modulo.
 - **`sar`**: Signed Arithmetic Shift Right. Unlike standard `shr` (which pads with zeros), `sar` preserves the sign bit, padding with `1`s if the number is negative.
@@ -286,3 +291,24 @@ A `staticcall` is exactly like a regular `call`, except **it immediately reverts
 - **Precompiled Contracts**: `staticcall` is the standard and appropriate way to interact with Ethereum's precompiled contracts (located at addresses `0x01` through `0x09`, such as `ecrecover` or `sha256`).
 - **Vulnerability 1: Gas Griefing (DoS)**: If you `staticcall` an untrusted contract (e.g., calling `balanceOf`), it can trap you in an infinite loop and burn all forwarded gas. Under EIP-150, your parent contract survives but is only left with 1/64th of its original gas—often causing your entire transaction to run out of gas and fail anyway.
 - **Vulnerability 2: Read-Only Reentrancy**: While `staticcall` prevents state manipulation, it is highly vulnerable to **oracle manipulation**. If an attacker uses a flashloan to temporarily distort a target contract's state, your `staticcall` will retrieve those falsified numbers, tricking your contract into executing flawed logic based on fake data.
+
+## 12. Ownable
+
+The standard OpenZeppelin `Ownable` contract provides basic access control, but its core `transferOwnership(newOwner)` function has a massive, well-known shortcoming: **it executes in a single step**.
+
+If the current owner accidentally mistypes the `newOwner` address, or pastes a non-existent or inaccessible address, the ownership of the contract is instantly and permanently lost. The transaction cannot be undone.
+
+### The Solution: `Ownable2Step`
+
+Because of this risk, **`Ownable2Step` is significantly safer than `Ownable`** and is widely considered the modern best practice for access control.
+
+`Ownable2Step` completely eliminates the typo risk by requiring a two-transaction "handshake":
+
+1. **Step 1 (`transferOwnership`)**: The current owner proposes a new address to take over. The contract saves this as the `_pendingOwner`. The original owner still retains full control.
+2. **Step 2 (`acceptOwnership`)**: The pending owner must actively call this function from their own wallet to finalize the transfer.
+
+If the original owner made a typo, the mistyped address will never be able to call `acceptOwnership()`. The original owner retains control and can simply restart the process with the correct address.
+
+### Renouncing Ownership
+
+The `Ownable` contract also includes a `renounceOwnership()` function. This permanently sets the `owner` to `address(0)`. Once called, **no one** can ever call `onlyOwner` functions again. It is a one-way, irreversible action typically used to prove to a community that a contract is now fully decentralized and can no longer be maliciously manipulated by its original developer.
