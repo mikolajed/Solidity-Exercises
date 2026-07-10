@@ -232,3 +232,17 @@ To keep the enumeration arrays perfectly in sync with actual token ownership, th
 - **`_addTokenToOwnerEnumeration(address to, uint256 tokenId)`**: Called during minting or transferring to simply append the new token to the end of the `to` address's `_ownedTokens` array and save its index.
 - **`_addTokenToAllTokensEnumeration(uint256 tokenId)`**: Called exclusively during minting to append the newly created token to the global `_allTokens` array and save its index.
 - **`_removeTokenFromAllTokensEnumeration(uint256 tokenId)`**: Called exclusively during burning. Just like the owner removal function, this utilizes the **swap-and-pop** technique on the global `_allTokens` array to maintain strict $O(1)$ efficiency when permanently destroying a token.
+
+## 8. ERC1363 (Payable Token Standard)
+
+- **The Problem**: Standard ERC20 `transfer()` is "deaf"—the receiving contract isn't notified, forcing a costly, 2-step `approve` + `transferFrom` process (which doubles gas and introduces "infinite approval" security risks).
+- **The Solution**: ERC1363 makes tokens act like native ETH. It introduces **`transferAndCall`**, which transfers tokens and immediately notifies the receiving contract in a single transaction by triggering a standardized callback function (a **hook**).
+- **Security Checks (`IERC1363Receiver` & `IERC1363Spender`)**: Contracts must implement the `onTransferReceived` hook to receive transfers, or the `onApprovalReceived` hook to receive approvals. Inside these hooks, you must **always** `require(msg.sender == tokenAddress)`. Otherwise, anyone can call them directly to fake deposits or approvals.
+- **Backwards Compatibility**: ERC1363 is fully backwards compatible with ERC20. It simply adds 6 new functions on top of the standard (two versions of each: with and without data payloads):
+  - **`transferAndCall`**
+  - **`transferFromAndCall`**
+  - **`approveAndCall`** (Triggers `onApprovalReceived` on the spender so they can react instantly to an allowance).
+- **Historical Context (Why not ERC777 or ERC223?)**: ERC1363 wasn't the first attempt at adding transfer hooks to tokens.
+  - **ERC223 (May 2017)** injected the hook directly into the standard `transfer` function. This broke backwards compatibility because older smart contracts without the hook could no longer receive the token.
+  - **ERC777 (Nov 2017)** used a global registry to trigger hooks on standard transfers. Because older DeFi protocols didn't expect a standard ERC20 transfer to execute an external contract call, it introduced catastrophic **reentrancy vulnerabilities** (infamously exploited in Uniswap V1).
+  ERC1363 succeeded because it isolates the hooks into brand new functions (`transferAndCall`), leaving the standard `transfer` function completely safe and untouched.
