@@ -258,3 +258,19 @@ Solidity and the EVM operate entirely on 256-bit words. Understanding the sheer 
   - *(Note: Using `uint256(-1)` used to be a popular hack to hit the max value via underflow, but this **doesn't work anymore** in Solidity 0.8.0+ due to built-in overflow/underflow protection).*
 - **The Astronomical Scale**: A `uint256` can hold numbers up to roughly $1.15 \times 10^{77}$. To put that sheer size into perspective: just 1,000 `uint256` variables could perfectly enumerate every single atom in the known universe.
 - **The Collision Corollary**: Because the numerical search space is so incomprehensibly massive, two randomly chosen `uint256` values (which is equivalent to the output of a `keccak256` hash) will, for all practical purposes, **never have a collision**.
+
+## 10. Solidity Signed Integers
+
+Solidity and the EVM use **Two's Complement** representation for signed integers (`int`). Because the highest-order bit dictates the sign (0 for positive, 1 for negative), the bitwise layouts look like this (using `int8` as an example):
+- `int8(0)` == `0000 0000`
+- `type(int8).max` == `0111 1111`
+- `type(int8).min` == `1000 0000`
+
+### Dedicated Signed Opcodes
+Because negative numbers start with a `1` at the most significant bit, they technically "appear" larger than positive numbers if evaluated as raw binary. Therefore, standard comparison operators and math functions break. Multiplication, division, modulo, right-shifting, and casting to larger sizes all require entirely different logic under the hood.
+
+To solve this, the EVM has specific opcodes exclusively for signed arithmetic:
+- **`slt` and `sgt`**: Signed Less Than / Signed Greater Than. They know that `1111...1111` is actually `-1`, not the max value.
+- **`sdiv` and `smod`**: Signed Division and Signed Modulo.
+- **`sar`**: Signed Arithmetic Shift Right. Unlike standard `shr` (which pads with zeros), `sar` preserves the sign bit, padding with `1`s if the number is negative.
+- **`signextend`**: Essential when casting a smaller signed integer to a larger one (e.g., `int8` to `int256`), ensuring the sign bit is correctly stretched across the new empty space.
