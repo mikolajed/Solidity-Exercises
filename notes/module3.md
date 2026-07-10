@@ -274,3 +274,15 @@ To solve this, the EVM has specific opcodes exclusively for signed arithmetic:
 - **`sdiv` and `smod`**: Signed Division and Signed Modulo.
 - **`sar`**: Signed Arithmetic Shift Right. Unlike standard `shr` (which pads with zeros), `sar` preserves the sign bit, padding with `1`s if the number is negative.
 - **`signextend`**: Essential when casting a smaller signed integer to a larger one (e.g., `int8` to `int256`), ensuring the sign bit is correctly stretched across the new empty space.
+
+## 11. Staticcall (EIP-214)
+
+A `staticcall` is exactly like a regular `call`, except **it immediately reverts if any state change occurs**. It enforces strictly read-only interactions.
+
+- **Meta Arguments (Gas Forwarding)**: You can forward a specific amount of gas, subject to the **EIP-150 63/64 rule**:
+  ```solidity
+  (bool success, bytes memory data) = target.staticcall{gas: amount}(abiEncodedArgs);
+  ```
+- **Precompiled Contracts**: `staticcall` is the standard and appropriate way to interact with Ethereum's precompiled contracts (located at addresses `0x01` through `0x09`, such as `ecrecover` or `sha256`).
+- **Vulnerability 1: Gas Griefing (DoS)**: If you `staticcall` an untrusted contract (e.g., calling `balanceOf`), it can trap you in an infinite loop and burn all forwarded gas. Under EIP-150, your parent contract survives but is only left with 1/64th of its original gas—often causing your entire transaction to run out of gas and fail anyway.
+- **Vulnerability 2: Read-Only Reentrancy**: While `staticcall` prevents state manipulation, it is highly vulnerable to **oracle manipulation**. If an attacker uses a flashloan to temporarily distort a target contract's state, your `staticcall` will retrieve those falsified numbers, tricking your contract into executing flawed logic based on fake data.
