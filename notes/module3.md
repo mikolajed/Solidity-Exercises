@@ -369,3 +369,20 @@ To solve this, several alternative standards were proposed (including ERC-223, E
 - **Ether Transfers**: Sending Ether via `address.call("")` hands over execution control to the receiver's fallback function.
 - **Cross-Function Reentrancy**: An attacker doesn't have to re-enter the *same* function. They can call a *different* function while the state is temporarily inconsistent.
 - **Read-Only (Cross-Contract) Reentrancy**: An attacker temporarily manipulates state in Contract A, then calls Contract B (which relies on A as an oracle). Contract B processes logic based on falsified data.
+
+## 16. Randomness on Blockchains
+
+Because blockchains are entirely deterministic, generating true randomness natively within a smart contract is extremely difficult. Below are the two primary methods used to achieve randomness:
+
+### 1. Commit-Reveal (Using Blockhash)
+This is a native, two-step workaround utilizing future block hashes.
+- **The Commit (Transaction 1)**: A user initiates an action at block $n$. The contract records that the random number will be derived from the hash of a future block, for example, block $n + 20$. Because block hashes cannot be predicted, the hash of block $n + 20$ acts as a fair random seed.
+- **The Reveal (Transaction 2)**: The EVM only allows a contract to look back at the hashes of the most recent 256 blocks. Therefore, the user must send a second transaction between block $n + 20$ and $n + 276$ to "reveal" the random number. 
+
+**Vulnerability Note**: A user can see the blockhash before sending the reveal transaction. If the result isn't favorable, they might just refuse to send the second transaction. Therefore, the contract must be designed so that failing to reveal is penalized (e.g., forfeiting their deposit). Furthermore, this scheme can technically be manipulated by block producers (miners/validators) who could intentionally discard blocks if the hash isn't favorable to them.
+
+### 2. Chainlink VRF (Verifiable Random Function)
+Chainlink VRF is the modern industry standard for secure, tamper-proof randomness. It uses an off-chain oracle network to generate the random number and mathematically proves its fairness on-chain.
+- **The Request**: Your smart contract sends a request (and a fee in LINK or native tokens) to the Chainlink VRF Coordinator contract.
+- **The Generation**: An off-chain Chainlink node detects the request, generates a random number, and creates a cryptographic proof that the number was generated fairly without manipulation.
+- **The Fulfillment**: The node sends a transaction back to the VRF Coordinator with the number and the proof. The Coordinator verifies the proof on-chain, and if valid, executes a callback function (`fulfillRandomWords`) inside your smart contract, securely delivering the random number.
