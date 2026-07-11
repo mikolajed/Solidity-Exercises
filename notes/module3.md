@@ -312,3 +312,11 @@ If the original owner made a typo, the mistyped address will never be able to ca
 ### Renouncing Ownership
 
 The `Ownable` contract also includes a `renounceOwnership()` function. This permanently sets the `owner` to `address(0)`. Once called, **no one** can ever call `onlyOwner` functions again. It is a one-way, irreversible action typically used to prove to a community that a contract is now fully decentralized and can no longer be maliciously manipulated by its original developer.
+
+## 13. Testing Internal Functions in Solidity
+
+Because test scripts cannot call `internal` functions directly, you must use a specific methodology:
+
+- **The Wrapper Contract**: Create a child contract that inherits from the contract you want to test. Write an `external` function inside the child that simply wraps and calls the parent's `internal` function. Deploy the child in your tests and call the wrapper.
+- **Why not just make it `public`?**: Never change an `internal` function to `public` just for testing. It adds raw bytecode (increasing deployment cost) and bloats the function selector table (increasing the execution gas cost of *every other public function* because the EVM has to search through a larger table to route transactions).
+- **Testing `private` functions**: `private` functions are invisible to child contracts, so the wrapper trick fails. The solution? Just change `private` to `internal`. Because the distinction between private/internal is purely a compiler safeguard (and completely disappears in EVM bytecode), making this change has **absolutely zero impact on gas cost or contract size**.
