@@ -336,3 +336,36 @@ Because test scripts cannot call `internal` functions directly, you must use a s
 - **Guarding Against Griefing (OZ Minimal Forwarder)**: In meta-transactions, a malicious relayer might provide less gas than the user requested, causing the transaction to fail mid-execution (SWC-126). OpenZeppelin's `Minimal Forwarder` uses `gasleft()` to ensure the relayer provided sufficient gas *before* executing the payload.
 - **Preventing Out-of-Gas Reverts (Chainlink EthBalance Monitor)**: When looping through large arrays, contracts can check `gasleft()`. If gas drops too low, the contract can gracefully break the loop and save state, rather than reverting the entire transaction.
 - **Forwarding Gas (OZ Proxies)**: Proxies use `gasleft()` inside Yul assembly to capture and forcefully forward all remaining gas directly to the underlying logic implementation.
+
+## 15. Finding Reentrancy Attacks
+
+The fundamental rule of reentrancy is that **it can only happen when your smart contract hands over execution control to another contract**. 
+
+This handover occurs in exactly two ways:
+1. Making an external function call to another smart contract.
+2. Sending Ether to an address (which automatically triggers the receiver's `fallback` or `receive` function if that address is a contract).
+
+If you do not call another contract or send Ether in the middle of a transaction's execution, you cannot hand over control, and **reentrancy is impossible**. 
+
+### Automating Detection
+Because the root cause of reentrancy is always an external call, you don't need to hunt for them manually. The static analysis tool **Slither** will automatically detect and flag every external function call in your codebase. You should always use it as a first line of defense to map out exactly where execution control leaves your contract.
+
+### The ERC1155 Danger
+Be incredibly careful when dealing with the ERC1155 token standard. Unlike ERC721 (which distinguishes between `transferFrom` and `safeTransferFrom`), **nothing is "safe" in ERC1155**. 
+
+*Every single transfer method* in the ERC1155 standard is required to call the receiving contract's `onERC1155Received` hook. This means any transfer of an ERC1155 token inherently hands over execution control and creates a potential reentrancy vector.
+
+### Untrusted ERC20 Tokens (ERC-223, 677, 777)
+A strictly standard ERC20 `transfer` or `transferFrom` function does not trigger any callbacks, meaning it does not hand over execution control and is naturally safe from reentrancy. However, this safety creates a UX problem: smart contracts cannot automatically know when they receive an ERC20 token.
+
+To solve this, several alternative standards were proposed (including ERC-223, ERC-677, and ERC-777) that intentionally inject transfer hooks into the standard `transfer` function to inform the receiver that tokens arrived. 
+
+**The Hidden Danger**: This serves as a massive warning when your contract interacts with untrusted tokens. A token might present itself as a standard ERC20, but under the hood, it might actually implement one of these hook-enabled standards. In this scenario, what looks like a perfectly innocent, non-reentrant `transfer()` in your code could secretly hand over execution control and trigger a devastating reentrancy attack.
+
+*(Note: **ERC-1363** solves this UX problem much more safely. In ERC-1363, the regular `transfer` function behaves exactly like a normal ERC20 without any sneaky hooks. If a user actually wants to alert the receiving contract that tokens arrived, they must explicitly opt-in by using the dedicated `transferAndCall` method instead).*
+
+### Key Rules & Variations
+- **Arbitrary Tokens**: Never assume `transfer`/`transferFrom` are safe when handling untrusted ERC20 tokens.
+- **Ether Transfers**: Sending Ether via `address.call("")` hands over execution control to the receiver's fallback function.
+- **Cross-Function Reentrancy**: An attacker doesn't have to re-enter the *same* function. They can call a *different* function while the state is temporarily inconsistent.
+- **Read-Only (Cross-Contract) Reentrancy**: An attacker temporarily manipulates state in Contract A, then calls Contract B (which relies on A as an oracle). Contract B processes logic based on falsified data.
