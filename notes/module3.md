@@ -320,3 +320,19 @@ Because test scripts cannot call `internal` functions directly, you must use a s
 - **The Wrapper Contract**: Create a child contract that inherits from the contract you want to test. Write an `external` function inside the child that simply wraps and calls the parent's `internal` function. Deploy the child in your tests and call the wrapper.
 - **Why not just make it `public`?**: Never change an `internal` function to `public` just for testing. It adds raw bytecode (increasing deployment cost) and bloats the function selector table (increasing the execution gas cost of *every other public function* because the EVM has to search through a larger table to route transactions).
 - **Testing `private` functions**: `private` functions are invisible to child contracts, so the wrapper trick fails. The solution? Just change `private` to `internal`. Because the distinction between private/internal is purely a compiler safeguard (and completely disappears in EVM bytecode), making this change has **absolutely zero impact on gas cost or contract size**.
+
+## 14. Gasleft
+
+`gasleft()` is a globally available, built-in Solidity function used to check the exact amount of gas remaining during execution. *(Note: It replaces the deprecated `msg.gas` syntax).*
+
+### Practical Uses & Real-World Applications
+
+- **Measuring Code Consumption (Chainlink VRF)**: Capture gas before and after logic to calculate exact costs. `Chainlink VRFCoordinatorV2` uses this exact pattern to accurately bill users for random number fulfillment callbacks.
+  ```solidity
+  uint256 startGas = gasleft();
+  // ... execute complex logic ...
+  uint256 gasUsed = startGas - gasleft();
+  ```
+- **Guarding Against Griefing (OZ Minimal Forwarder)**: In meta-transactions, a malicious relayer might provide less gas than the user requested, causing the transaction to fail mid-execution (SWC-126). OpenZeppelin's `Minimal Forwarder` uses `gasleft()` to ensure the relayer provided sufficient gas *before* executing the payload.
+- **Preventing Out-of-Gas Reverts (Chainlink EthBalance Monitor)**: When looping through large arrays, contracts can check `gasleft()`. If gas drops too low, the contract can gracefully break the loop and save state, rather than reverting the entire transaction.
+- **Forwarding Gas (OZ Proxies)**: Proxies use `gasleft()` inside Yul assembly to capture and forcefully forward all remaining gas directly to the underlying logic implementation.
