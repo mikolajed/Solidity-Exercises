@@ -31,3 +31,26 @@ function updatePool() internal {
     lastRewardBlock = block.number;
 }
 ```
+
+## 2. Fixed Point Arithmetic in Solidity
+
+The EVM does not natively support floating-point numbers (decimals). To represent fractions and percentages, DeFi protocols use **Fixed Point Arithmetic**—multiplying a value by a large implied denominator so it can be stored as a whole integer.
+
+### Base-10: WADs & Solady
+A **WAD** is a number scaled by $10^{18}$ (e.g., $1.0 = 10^{18}$). 
+- **Convert to Fixed Point**: Multiply the integer by $10^{18}$.
+- **Multiply**: Multiply two WADs, then divide the result by $10^{18}$ to scale it back down.
+- **Divide**: Multiply $x$ by $10^{18}$ first, then divide by $y$.
+
+*Note: The **Solady** library provides highly-optimized `mulWad` and `divWad` Yul assembly functions that automatically handle this $10^{18}$ scaling and include built-in overflow/divide-by-zero checks.*
+
+### Base-2: Binary Fixed Point (ABDK & Uniswap V2)
+While base-10 is readable, **Binary Fixed Point** (base-2) is vastly more gas-efficient because the EVM can use bitwise operations instead of expensive math opcodes.
+
+**1. ABDK Library (64.64-bit)**
+ABDK uses an implied $2^{64}$ denominator.
+- **Multiply by Denominator**: Uses a gas-efficient left shift (`x << 64`) to encode standard integers.
+- **Divide by Denominator**: Uses a gas-efficient right shift (`(x * y) >> 64`) to scale products back down.
+
+**2. Uniswap V2 (UQ112x112)**
+Uniswap V2 uses a 224-bit binary format ($2^{112}$ denominator). Their math library is intentionally minimal because the core protocol only ever needs to *add* fixed point numbers together, or *divide* a fixed point number by a standard integer.
