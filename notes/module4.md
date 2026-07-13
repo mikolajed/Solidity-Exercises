@@ -54,3 +54,68 @@ ABDK uses an implied $2^{64}$ denominator.
 
 **2. Uniswap V2 (UQ112x112)**
 Uniswap V2 uses a 224-bit binary format ($2^{112}$ denominator). Their math library is intentionally minimal because the core protocol only ever needs to *add* fixed point numbers together, or *divide* a fixed point number by a standard integer.
+
+## 3. Flash Loans
+
+Flash loans are loans issued between smart contracts that must be borrowed, utilized, and repaid within the exact same transaction. **ERC-3156** seeks to standardize the interface for getting these flash loans.
+
+### What are Flash Loans used for?
+Because they allow users to borrow massive amounts of capital with zero collateral (provided it's repaid instantly), flash loans enable several unique DeFi mechanics:
+- **Arbitrage**: Profiting from price differences across different decentralized exchanges.
+- **Refinancing Loans**: Swapping out a loan with a high interest rate for one with a lower rate across platforms without needing upfront capital to close the first loan.
+- **Exchanging Collateral**: Swapping the underlying collateral of an active loan.
+- **Liquidating Borrowers**: Providing the capital needed to liquidate an undercollateralized position and claiming the liquidation bonus.
+- **Increasing Yield**: Funneling capital to increase yield for other DeFi applications.
+- **Hacking Smart Contracts**: Exploiting logic flaws in protocols (e.g., price oracle manipulation). *Note: The vulnerability is two-sided—a flash lending and flash borrowing contract can also be vulnerable to losing money if not implemented properly.*
+- **Building a Leverage Loop**: Looping deposits and borrows in a single transaction to gain massive exposure.
+
+### The Leverage Loop Math
+When building a leverage loop using a flash loan, the total amount of assets that can be borrowed in this recursive manner is calculated as:
+
+$$ \text{Max Exposure} = \frac{1}{1 - \text{LTV}} $$
+
+Where **LTV** is the maximum Loan-to-Value ratio the protocol accepts. 
+
+**Example**: If a protocol requires a deposit of $1000 worth of stablecoins to borrow $800 of ETH, the LTV is $800/1000 = 0.8$. 
+Thus, using a flash loan leverage loop, a user could gain up to $\frac{1}{1 - 0.8} = 5$ times the exposure to the price of ETH compared to their initial deposit. They could be exposed to $5,000 worth of ETH with only a $1000 deposit.
+
+### The ERC-3156 Interfaces
+
+**1. The Borrower (`IERC3156FlashBorrower`)**
+The first aspect of the standard is the interface the borrowing contract needs to implement. The borrower only needs to implement a single function: `onFlashLoan`. 
+
+**2. The Lender (`IERC3156FlashLender`)**
+The lender contract must implement the following interface, which defines how much can be borrowed, the fee, and the entry point to actually initiate the loan:
+
+```solidity
+import "./IERC3156FlashBorrower.sol";
+
+interface IERC3156FlashLender {
+    
+    // for a particular token, how much can be flash loaned out
+    function maxFlashLoan(address token) external view returns (uint256);
+
+    // for a particular token, how much interest is charged.
+    // units are in the token quantity, not interest rate
+    function flashFee(address token, uint256 amount) external view returns (uint256);
+
+    // initiate the flash loan for a particular token and amount
+    // ANYONE CAN CALL THIS WITH ANY ARGUMENTS
+    function flashLoan(
+        IERC3156FlashBorrower receiver,
+        address token,
+        uint256 amount,
+        bytes calldata data
+    ) external returns (bool);
+}
+```
+
+### Security Considerations
+
+> [!WARNING]
+> Flash loans introduce massive vectors for exploitation if not implemented carefully on both the lending and borrowing sides.
+
+- **Borrower Access Control**: You must strictly validate that *only* the trusted flash lender contract can call your `onFlashLoan` function. If the lender is immutable, checking `msg.sender` is sufficient; if it is upgradeable, it requires more complex tracking. Without this, malicious actors could arbitrarily trigger flash loan logic on your contract.
+- **Input Validation**: The borrower must validate all incoming arguments to ensure they match the expected loan.
+- **Reentrancy Locks**: Reentrancy guards are incredibly important on the lender's `flashLoan` function. If locks are missing, a malicious borrower could re-enter the lending contract during the `onFlashLoan` callback to drain funds or manipulate state.
+- **Token Recovery Mechanics**: It is crucial that the *lender* is the one actively pulling the tokens (plus the fee) back from the borrower at the end of the transaction. If the lender relies on the borrower to push them back, strict reentrancy locks must be in place to prevent attacks.
