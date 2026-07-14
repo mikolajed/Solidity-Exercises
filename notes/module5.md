@@ -154,3 +154,59 @@ Because `swap()` is a raw, low-level function, it lacks basic safety rails. Ther
 2. **You might waste gas on reverts:** The `amountOut` parameters are strictly fixed. If the tokens you sent in turn out to be insufficient to cover the requested `amountOut` due to slippage, the transaction will simply revert at the very end (during the `K` check), completely wasting your gas. 
 
 *(This is exactly why normal users should never call `pair.swap()` directly, but instead route their trades through the **Router** contract, which acts as a safety layer by handling slippage protection and optimal input amounts!)*
+
+## 4. Uniswap V2 Mint and Burn Functions
+
+### The Burn Function (Removing Liquidity)
+When a Liquidity Provider decides to exit the pool, they burn their LP tokens in exchange for the underlying assets. The math here is strictly proportional based on their share of the total supply. 
+
+**The Burn Calculation:**
+The amount of underlying tokens returned is calculated exactly as: `Liquidity Burned / Total LP Supply`. 
+For example, if the total supply of LP tokens is 1,000, and a user burns 100 LP tokens, they will receive exactly **10%** of the `token0` and **10%** of the `token1` currently held by the pool.
+
+**The Slippage Risk:**
+It is critical to remember that the pool's ratio of `token0` to `token1` can change between the moment you sign the burn transaction and the moment it is confirmed on-chain (due to other swaps happening in the mempool). Because of this, you might withdraw a significantly different split of the two tokens than you originally anticipated.
+
+### The Mint Function (Adding Liquidity)
+When adding liquidity, the protocol strictly enforces that you cannot change the current price ratio of the pool. 
+
+**The Mint Calculation:**
+To enforce this, the smart contract calculates the number of LP tokens to mint based on the *worse* of the two token deposit ratios. 
+
+Mathematically, it calculates both:
+1. `(amount0 / _reserve0) * totalSupply`
+2. `(amount1 / _reserve1) * totalSupply`
+
+...and mints the **minimum** of the two. 
+
+The fact that the user will always get the worse of the two ratios heavily incentivizes them to deposit `token0` and `token1` in the exact perfect ratio of the current pool. If they provide an imperfect ratio, the AMM simply absorbs the excess tokens as a free donation to the pool without giving the user any extra LP shares!
+
+### What can go wrong? (The lack of Safety Checks)
+Just like the low-level `swap` function, calling the low-level `mint` function directly is extremely dangerous because it lacks basic slippage protections:
+
+1. **Supply Ratio Safety Check:** The low-level `mint` function does not check if the pool's ratio drastically shifted while your transaction was pending in the mempool. If you send tokens expecting a 50/50 ratio, but a massive trade occurs right before your transaction, the ratio could shift to 80/20. Because `mint` always gives you the *minimum* of the two ratios, the pool will absorb your now "incorrect" ratio and you will lose capital.
+2. **TotalSupply Safety Check:** The low-level `mint` function does not allow you to specify a minimum amount of LP tokens you expect to receive. If the `totalSupply` or reserves fluctuate wildly before your transaction lands, you might mint far fewer LP tokens than your capital was actually worth. 
+
+*(Once again, the **Router** contract solves this by providing `amount0Min`, `amount1Min`, and `amountTokenMin` parameters when adding/removing liquidity, ensuring the transaction safely reverts if the pool ratio or LP token output falls below your acceptable threshold).*
+
+### The Initial Minter: Why Liquidity is $\sqrt{k}$
+When a pool is first created, there is no `totalSupply` of LP tokens to use as a baseline for proportional math. For the **very first depositor**, Uniswap calculates the amount of LP tokens to mint using the geometric mean of the deposited assets:
+
+$$ \text{Initial LP Tokens} = \sqrt{x \cdot y} = \sqrt{k} $$
+
+**Why $\sqrt{k}$?** 
+It ensures that the value of an LP token grows linearly with the overall size of the pool, regardless of the initial price ratio. If a pool is created with 4 times as much liquidity, $k$ becomes 16 times larger, but $\sqrt{k}$ becomes exactly 4 times larger, correctly minting 4 times as many LP tokens.
+
+### The First Minter Problem (Inflation Attack)
+Because of how Ethereum handles integer division (always rounding down to the nearest whole number), AMMs are vulnerable to a brutal exploit called the **First Minter Problem** (or Inflation Attack).
+
+An attacker could:
+1. Be the first minter and deposit tiny amounts (e.g., 1 wei of `token0` and 1 wei of `token1`), minting exactly 1 wei of an LP token.
+2. Directly transfer (donate) massive amounts of `token0` and `token1` into the pair contract.
+3. This artificially inflates the underlying value of their single 1 wei LP token to an astronomical price.
+4. When a normal user tries to deposit liquidity, the formula `(amount / reserve) * totalSupply` evaluates to a fraction (e.g., `0.99`). Because Solidity truncates fractions to `0`, the user mints `0` LP tokens, and their deposited capital is completely stolen and absorbed by the attacker's 1 wei LP token.
+
+**Uniswap's Solution:**
+To completely prevent this attack, Uniswap V2 forcibly burns the first **1000 wei** of LP tokens by permanently locking them inside `address(0)`. 
+- Because those tokens can never be redeemed, no one can ever own 100% of the pool.
+- It forces the minimum value of `totalSupply` to be at least 1000, making it astronomically expensive (requiring millions of dollars of upfront capital) for an attacker to artificially inflate the pool enough to successfully exploit the rounding error.
