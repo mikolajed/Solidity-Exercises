@@ -33,7 +33,7 @@ Because AMMs operate purely on mathematical ratios rather than order books, they
 - **Loss of Pricing Control:** Liquidity Providers cannot dictate the price their assets are sold at; they are entirely at the mercy of the mathematical formula.
 - **Impermanent Loss:** As the pool's ratio shifts due to trading, Liquidity Providers may suffer from "impermanent loss" (meaning their deposited assets would have been worth more if they had simply held them in their wallet rather than providing liquidity).
 
-## 2. The Architecture of Uniswap V2
+### 4. Smart Contract Architecture
 The entire Uniswap V2 system is surprisingly simple, driven by just three core smart contracts:
 
 1. **[The Factory](https://github.com/Uniswap/v2-core/blob/master/contracts/UniswapV2Factory.sol):** A permissionless registry used to deploy new Pair contracts. 
@@ -61,3 +61,32 @@ function pairFor(address factory, address tokenA, address tokenB) internal pure 
     )))));
 }
 ```
+
+## 2. Calculating the Settlement Price of an AMM Swap
+
+### The Constant Product Formula
+The entire pricing mechanism of a Uniswap V2 pool is derived from one fundamental rule: a trade can never decrease the total product of the pool's reserves ($k$).
+
+In practice, the smart contract enforces this by comparing the product before and after a swap:
+$$ k_{\text{before}} \le k_{\text{after}} $$
+
+Expanding this out to the actual token balances:
+$$ x_{\text{before}} \times y_{\text{before}} \le x_{\text{after}} \times y_{\text{after}} $$
+
+> **Why the $\le$ (less than or equal to) sign?** 
+> 1. Uniswap charges a trading fee, meaning $k_{\text{after}}$ will organically grow slightly on every trade.
+> 2. Uniswap does not stop users from accidentally giving the AMM more tokens than they need to. If a user inputs a bad trade, the pool simply absorbs the excess capital, pushing $k_{\text{after}}$ higher.
+
+### Calculating the Swap Output ($\Delta y$)
+If a trader wants to deposit a specific amount of Token X ($\Delta x$), how much of Token Y ($\Delta y$) will they receive in return? 
+
+By manipulating the constant product formula and factoring in Uniswap V2's standard **0.3% trading fee**, the exact math for calculating the maximum swap output is:
+
+$$ \Delta y \le y - \left( \frac{x \cdot y}{x + (\Delta x \cdot 99.7\%)} \right) $$
+
+Where:
+- $x$ and $y$ are the total pool reserves *before* the swap.
+- $\Delta x \cdot 99.7\%$ is the amount of tokens deposited into the AMM *after* the 0.3% fee is deducted.
+- $\Delta y$ is the maximum amount of tokens swapped out of the AMM.
+
+> **The Slippage Curve:** Notice how $\Delta x$ is in the denominator. Because of the mathematical curve created by this formula, the more $\Delta x$ you dump into the pool in a single trade, the worse your execution price becomes. The ratio shifts aggressively against you as the trade executes, meaning **larger trades get proportionally less output.**
