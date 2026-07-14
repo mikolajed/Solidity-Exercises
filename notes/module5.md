@@ -90,3 +90,67 @@ Where:
 - $\Delta y$ is the maximum amount of tokens swapped out of the AMM.
 
 > **The Slippage Curve:** Notice how $\Delta x$ is in the denominator. Because of the mathematical curve created by this formula, the more $\Delta x$ you dump into the pool in a single trade, the worse your execution price becomes. The ratio shifts aggressively against you as the trade executes, meaning **larger trades get proportionally less output.**
+
+## 3. Breaking Down the Uniswap V2 Swap Function
+
+At the heart of the `UniswapV2Pair.sol` contract is the `swap` function. It is a low-level function, meaning it expects the Router contract to have already performed safety checks (like ensuring the user actually sent the input tokens). 
+
+Here is the exact source code, with a breakdown of its core mechanics:
+
+```solidity
+// this low-level function should be called from a contract which performs important safety checks
+function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external lock {
+    require(amount0Out > 0 || amount1Out > 0, 'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT');
+    (uint112 _reserve0, uint112 _reserve1,) = getReserves(); // gas savings
+    require(amount0Out < _reserve0 && amount1Out < _reserve1, 'UniswapV2: INSUFFICIENT_LIQUIDITY');
+
+    uint balance0;
+    uint balance1;
+    { // scope for _token{0,1}, avoids stack too deep errors
+    address _token0 = token0;
+    address _token1 = token1;
+    require(to != _token0 && to != _token1, 'UniswapV2: INVALID_TO');
+    
+    // 1. Optimistic Transfers
+    if (amount0Out > 0) _safeTransfer(_token0, to, amount0Out); // optimistically transfer tokens
+    if (amount1Out > 0) _safeTransfer(_token1, to, amount1Out); // optimistically transfer tokens
+    
+    // 2. Flash Swap execution (if data is passed)
+    if (data.length > 0) IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
+    
+    balance0 = IERC20(_token0).balanceOf(address(this));
+    balance1 = IERC20(_token1).balanceOf(address(this));
+    }
+    
+    // 3. Calculate how much was sent IN
+    uint amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
+    uint amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
+    require(amount0In > 0 || amount1In > 0, 'UniswapV2: INSUFFICIENT_INPUT_AMOUNT');
+    
+    { // scope for reserve{0,1}Adjusted, avoids stack too deep errors
+    
+    // 4. Adjust balances for the 0.3% fee
+    uint balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
+    uint balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
+    
+    // 5. The Constant Product Check (k_after >= k_before)
+    require(balance0Adjusted.mul(balance1Adjusted) >= uint(_reserve0).mul(_reserve1).mul(1000**2), 'UniswapV2: K');
+    }
+
+    _update(balance0, balance1, _reserve0, _reserve1);
+    emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out, to);
+}
+```
+
+### Key Mechanics of the Swap:
+1. **Optimistic Transfers:** Notice how Uniswap actually sends the requested output tokens to the user *before* it even checks if the user paid for them! 
+2. **Flash Swaps (Flash Borrowing):** Because of the optimistic transfer, if the user provides `data`, Uniswap pauses execution and calls `uniswapV2Call` on the receiving smart contract. This allows the user to execute arbitrary logic (like an arbitrage trade) using the un-paid-for tokens. However, the receiving contract *must* pay the tokens back (plus fees) before the transaction ends, otherwise the `K` requirement will fail. *(Note: To use this feature, the swap must be executed by a custom smart contract, not an EOA).*
+3. **Calculating Inputs (Fees on Tokens In):** Once control is returned to Uniswap, it simply checks its current `balanceOf` to see how much the user eventually deposited. An important nuance here is that **you pay fees on the tokens you send IN, not on the tokens you receive OUT.** 
+4. **Accounting for Fees (The `K` Requirement):** The contract calculates the `Adjusted` balances by mathematically deducting the 0.3% fee from the tokens sent in. Finally, it enforces the Constant Product Formula. The protocol doesn't just want $K$ to get larger; it specifically enforces that $K$ gets larger *by at least an amount that accounts for the 0.3% fee*. If $k_{\text{after}}$ is less than $k_{\text{before}}$, the entire transaction safely reverts.
+
+### What can go wrong? (The lack of Safety Checks)
+Because `swap()` is a raw, low-level function, it lacks basic safety rails. There are two major things that can go wrong if called directly:
+1. **You might accidentally overpay:** The contract does not check if your `amountIn` was optimal. If you send way too many tokens into the contract, the AMM simply absorbs the excess (pushing $K$ higher) and you lose that capital permanently. 
+2. **You might waste gas on reverts:** The `amountOut` parameters are strictly fixed. If the tokens you sent in turn out to be insufficient to cover the requested `amountOut` due to slippage, the transaction will simply revert at the very end (during the `K` check), completely wasting your gas. 
+
+*(This is exactly why normal users should never call `pair.swap()` directly, but instead route their trades through the **Router** contract, which acts as a safety layer by handling slippage protection and optimal input amounts!)*
