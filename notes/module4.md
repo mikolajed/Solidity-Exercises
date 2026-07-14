@@ -119,3 +119,21 @@ interface IERC3156FlashLender {
 - **Input Validation**: The borrower must validate all incoming arguments to ensure they match the expected loan.
 - **Reentrancy Locks**: Reentrancy guards are incredibly important on the lender's `flashLoan` function. If locks are missing, a malicious borrower could re-enter the lending contract during the `onFlashLoan` callback to drain funds or manipulate state.
 - **Token Recovery Mechanics**: It is crucial that the *lender* is the one actively pulling the tokens (plus the fee) back from the borrower at the end of the transaction. If the lender relies on the borrower to push them back, strict reentrancy locks must be in place to prevent attacks.
+
+## 4. Chainlink Price Feeds
+
+Chainlink provides decentralized price oracles (typically USD-denominated) by aggregating data from multiple off-chain nodes to prevent single-point-of-failure manipulation.
+
+> [!WARNING]
+> Always use `latestRoundData()` to read prices. The older `latestAnswer()` function is deprecated.
+
+### On-Chain Architecture
+The off-chain prices enter the ecosystem via the `transmit` function. The system relies on 3 core contracts:
+1. **Price Feed Contract**: The proxy interface users interact with (where `latestRoundData()` lives).
+2. **Aggregator Contract**: The backend engine that receives raw data from nodes via the `transmit` function.
+3. **Validator Contract**: (Optional) Validates data bounds before finalization.
+
+### Price Update Frequency
+To optimize gas, Chainlink only pushes on-chain price updates under two conditions:
+1. **Heartbeat**: A maximum time interval passes (e.g., 1 hour for ETH/USD).
+2. **Deviation Threshold**: The off-chain price moves beyond a specific percentage (e.g., 0.5%).
