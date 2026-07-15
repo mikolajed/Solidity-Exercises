@@ -317,3 +317,139 @@ $$ price(\text{foo}) = \frac{reserve(\text{bar})}{reserve(\text{foo})} $$
 
 It is used exclusively to calculate the perfect ratio of Token A to Token B when adding liquidity. 
 **WARNING:** Because `quote()` returns the pure spot price, it is entirely vulnerable to flash loan manipulation. It must *never* be used as an on-chain price oracle!
+
+## 8. Uniswap v2 router code walkthrough
+
+### The Role of the Router
+The `UniswapV2Pair` core contracts are incredibly low-level and intentionally strip out safety checks to save gas. They are not meant to be interacted with directly by normal users.
+
+Instead, the **Router** acts as the primary user-facing smart contract, wrapping the core contracts in essential safety and quality-of-life logic. The Router provides five critical functionalities:
+
+1. **Safe Liquidity Management:** Safely routing user funds to mint and burn LP tokens.
+2. **Safe Swapping:** Executing trades (including complex multi-hop paths) smoothly.
+3. **Native ETH Integration:** Automatically wrapping/unwrapping raw Ether (ETH) into WETH behind the scenes so users don't have to manually interact with the WETH ERC20 contract before trading.
+4. **Slippage Protection:** Implementing strict `amountOutMin` and deadline checks (which are completely omitted from the core Pair contracts) to protect users from MEV sandwich attacks and stalled transactions.
+5. **Fee-on-Transfer Support:** Explicitly supporting tokens that take a "tax" on transfer (like deflationary meme coins) by verifying the exact amounts received *after* the tax is taken, rather than trusting the pre-transfer parameters.
+
+*(Note: Uniswap originally launched with `UniswapV2Router01`, but quickly discovered that fee-on-transfer tokens were breaking the swap math. They subsequently deployed `UniswapV2Router02`, which is functionally identical to `Router01` but introduces specific `SupportingFeeOnTransferTokens` functions to safely handle these deflationary edge cases.)*
+
+### Swapping Tokens: Exact In vs. Exact Out
+When swapping standard ERC20 tokens, the Router provides two distinct paths depending on where the user wants to place their slippage risk:
+
+#### 1. `swapExactTokensForTokens`
+- **The Intent:** "I have exactly 100 Token A to spend. Give me as much Token B as possible."
+- **Slippage Protection:** `amountOutMin`. Because the input is fixed, the user is vulnerable to the output fluctuating. If MEV bots manipulate the pool causing the output to drop below `amountOutMin`, the Router aggressively reverts the entire transaction.
+- **Under the Hood:** The Router calculates the expected output using the library, verifies it meets the minimum threshold, transfers the exact input from the user to the first pool, and calls `_swap` to chain the tokens down the path to the user's destination.
+
+#### 2. `swapTokensForExactTokens`
+- **The Intent:** "I need exactly 100 Token B to emerge at the end. Pull whatever Token A is required from my wallet to make it happen."
+- **Slippage Protection:** `amountInMax`. Because the exact output is demanded, the user is vulnerable to the *input cost* skyrocketing. If MEV manipulation causes the required input to exceed `amountInMax`, the Router reverts.
+- **Under the Hood:** The Router uses `getAmountsIn` (solving the algebraic math backward) to figure out exactly how much input is required *right now* to achieve the demanded output, verifies it doesn't exceed the user's max budget, pulls that calculated input, and executes the swap.
+
+### The Internal `_swap()` Engine
+Whether you are executing an "exact in" or an "exact out" trade, the Router ultimately relies on its internal `_swap()` function to physically move the tokens. 
+
+This function contains the core `for` loop responsible for chaining multi-hop trades (e.g., Token A $\rightarrow$ Token B $\rightarrow$ Token C) with extreme gas efficiency.
+
+Once the initial input tokens are sent to the very first Pair contract, the `_swap()` loop executes the following logic for every hop in the path:
+1. It determines the address of the *next* Pair contract in the sequence (or the user's wallet address if it is the final hop).
+2. It determines exactly how much of `token0` or `token1` should be outputted from the current Pair.
+3. It calls the low-level `swap()` function on the current Pair contract, instructing it to send those output tokens **directly to the destination address determined in Step 1**.
+
+**Why is this brilliant?**
+The tokens never touch the Router contract during intermediate hops! If you are swapping A $\rightarrow$ B $\rightarrow$ C, Pool 1 sends Token B directly into Pool 2. Pool 2 then sends Token C directly to the user. By bypassing the Router entirely during the physical transfers, Uniswap saves massive amounts of gas.
+
+### The `_addLiquidity` Calculation
+When a user wants to provide liquidity, they pass in `amountADesired` and `amountBDesired`. However, because the pool's ratio dictates the market price, new liquidity must be added in the *exact same ratio* as the current reserves. 
+
+The Router uses the internal `_addLiquidity()` function to mathematically calculate the optimal deposit amounts without exceeding the user's desired budget:
+
+1. **Creating the Pool:** If the Pair contract doesn't exist yet, the Router dynamically deploys it using the Factory.
+2. **Initial Liquidity:** If the pool is completely empty, the user's `Desired` amounts are accepted as-is, because their deposit permanently establishes the initial ratio of the pool.
+3. **Matching Ratios:** If the pool already has reserves, the Router uses the library's `quote()` function to calculate how much Token B is mathematically required to perfectly match `amountADesired`.
+   - If `amountBOptimal <= amountBDesired`, the user provided enough Token B budget! The function locks in `amountADesired` and `amountBOptimal`.
+   - If `amountBOptimal > amountBDesired`, the user's Token B budget is too small to match all of their Token A. The Router flips the math: it calculates how much Token A is required to perfectly match `amountBDesired`. It then locks in `amountAOptimal` and `amountBDesired`.
+
+Once these exact, ratio-perfect amounts are calculated, the outer user-facing `addLiquidity` function safely pulls those precise amounts from the user, sends them to the pool, and calls the low-level `mint()` function to issue the LP tokens!
+
+### `addLiquidity()` & `addLiquidityETH()`
+These are the primary user-facing functions that execute the physical deposit.
+
+#### 1. `addLiquidity()`
+This function orchestrates standard ERC20/ERC20 deposits:
+1. It calls `_addLiquidity()` to calculate the exact optimal amounts of Token A and Token B.
+2. It uses `SafeERC20` to securely transfer those exact amounts from the user's wallet directly into the Pair contract.
+3. It calls the low-level `mint()` function on the Pair contract, passing in the user's address so they receive the newly minted LP tokens.
+
+#### 2. `addLiquidityETH()`
+This function orchestrates ERC20/ETH deposits, automatically handling the messy process of wrapping Ether. It is marked `payable` so users can attach raw ETH directly to the transaction.
+1. It calls `_addLiquidity()` to calculate the exact optimal amounts of the ERC20 Token and ETH required.
+2. It safely transfers the exact amount of the ERC20 token from the user to the Pair contract.
+3. It takes the required amount of raw ETH from `msg.value`, deposits it into the WETH contract (wrapping it), and sends that newly-minted WETH directly to the Pair contract.
+4. It calls `mint()` to issue the LP tokens to the user.
+5. **The Refund:** If the optimal ratio calculation required *less* ETH than the user actually attached in `msg.value`, the Router automatically refunds the excess raw ETH back to the user's wallet!
+
+### Removing Liquidity & Permits
+When users want to cash out their LP tokens and reclaim their underlying assets, the Router provides several helper functions.
+
+#### 1. `removeLiquidity()` & `removeLiquidityETH()`
+`removeLiquidity` simply pulls the LP tokens from the user, sends them to the Pair contract, and calls the low-level `burn()` function. 
+
+`removeLiquidityETH` is a wrapper that actually calls `removeLiquidity` under the hood. It receives the underlying ERC20 token and WETH from the burned LP tokens. It safely transfers the ERC20 token to the user, but intercepts the WETH, unwraps it back into raw ETH, and sends the raw ETH directly to the user's wallet.
+
+#### 2. `removeLiquidityWithPermit()`
+Normally, to interact with the Router, a user must first submit a separate `approve()` transaction to the ERC20 contract granting the Router permission to spend their tokens, and *then* submit the actual Router transaction. This creates bad UX and requires two separate gas fees.
+
+However, Uniswap V2 LP tokens natively implement **ERC2612 Permits**. This allows a user to cryptographically sign an approval message off-chain. 
+The user can pass this signature directly into `removeLiquidityWithPermit()`. The Router will verify the signature, instantly grant itself allowance, and burn the LP tokens all within a **single transaction**! 
+
+*(Naturally, `removeLiquidityETHWithPermit()` does exactly the same thing, but additionally handles unwrapping the resulting WETH into raw ETH).*
+
+### Router02: Supporting Fee-On-Transfer Tokens
+When Uniswap V2 originally launched with `Router01`, deflationary "fee-on-transfer" tokens (meme coins that burn 2% of every transaction) broke the internal math.
+
+In a standard swap, the Router mathematically calculates that sending 100 Token A should yield 50 Token B. It sends 100 Token A to the pool, and tells the pool to execute the swap. 
+However, if Token A has a 2% tax, the pool actually only receives 98 tokens. When the Router subsequently instructs the pool to execute the swap expecting 100 input tokens, the pool's $x \cdot y = k$ mathematical invariant instantly fails, and the entire transaction reverts.
+
+To fix this, Uniswap deployed `Router02`, which introduced new functions appended with `SupportingFeeOnTransferTokens`.
+
+Instead of relying on pre-calculated theoretical math, these functions use an empirical **balance-checking** approach:
+1. They check the pool's balance of Token A *before* the transfer.
+2. They execute the physical transfer.
+3. They check the pool's balance of Token A *after* the transfer.
+4. They subtract the difference.
+
+This difference represents the *exact* number of tokens that safely arrived inside the pool after the deflationary tax was extracted. The Router then feeds this true, post-tax number into the swap math, ensuring the $k$ invariant perfectly balances and the transaction succeeds!
+
+### Wrappers Around the `UniswapV2Library`
+At the very bottom of the Router contract, you will find several `public view` and `public pure` functions, including:
+- `quote()`
+- `getAmountOut()` / `getAmountIn()`
+- `getAmountsOut()` / `getAmountsIn()`
+
+These functions contain no unique logic of their own. They are simple wrappers that forward the arguments directly to the underlying `UniswapV2Library` contract and return the result.
+
+**Why does the Router do this?** 
+Pure developer convenience. Instead of forcing every frontend developer or external smart contract to import, compile, and call the `UniswapV2Library` directly just to calculate trade math, the Router exposes them natively. This allows developers to treat the Router as a singular "one-stop-shop" API: they query the Router to calculate the expected price, and then send the physical trade to that exact same Router contract.
+
+## 9. Security & MEV Exploits in Uniswap V2
+Because Uniswap is completely decentralized and operates on a public mempool, user transactions are highly vulnerable to malicious MEV (Maximal Extractable Value) bots if not properly secured by the Router's parameters.
+
+### 1. Exploiting Old Transactions (The `deadline` Parameter)
+If a user submits a swap but the Ethereum network becomes congested, their transaction might sit pending in the public mempool for hours. During those hours, the true market price of the asset might shift dramatically. 
+
+If the transaction finally executes hours later using the old, outdated slippage parameters, MEV bots can easily sandwich it and extract massive value. 
+
+To prevent this, every Router function takes a **`deadline`** parameter (a Unix timestamp). The Router enforces a strict `require(block.timestamp <= deadline)` check. If the transaction is delayed in the mempool past the deadline, it safely reverts, preventing the user from executing a trade at an outdated and highly vulnerable price.
+
+### 2. The Danger of Zero Slippage (The `amountMin` Parameter)
+It is a catastrophic security failure to ever set `amountOutMin` to `0` (or `amountInMax` to `type(uint).max`) when calling the Router.
+
+If `amountOutMin` is 0, the user is mathematically telling the Router: *"I am willing to accept 0 tokens in return for my deposit."*
+
+MEV bots monitor the mempool for exactly this mistake. If they spot a zero-slippage transaction, they will execute a brutal **Sandwich Attack**:
+1. **Front-run:** The bot buys a massive amount of the token, artificially pushing the price in the pool astronomically high.
+2. **Execution:** The user's transaction executes at this artificially terrible price. Because their `amountOutMin` was 0, the Router accepts the trade, giving the user practically nothing in return for their massive input.
+3. **Back-run:** The bot immediately sells the tokens they bought in step 1 back into the pool at a massive profit, completely draining the value from the user's trade.
+
+To protect against this, frontends always calculate the mathematically expected output, subtract a tiny tolerance (e.g., 0.5%), and pass that strict threshold as the `amountOutMin`.
