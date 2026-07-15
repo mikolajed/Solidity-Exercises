@@ -210,3 +210,41 @@ An attacker could:
 To completely prevent this attack, Uniswap V2 forcibly burns the first **1000 wei** of LP tokens by permanently locking them inside `address(0)`. 
 - Because those tokens can never be redeemed, no one can ever own 100% of the pool.
 - It forces the minimum value of `totalSupply` to be at least 1000, making it astronomically expensive (requiring millions of dollars of upfront capital) for an attacker to artificially inflate the pool enough to successfully exploit the rounding error.
+
+## 5. How Uniswap V2 Computes the mintFee
+
+### The Protocol Fee Switch
+When Uniswap V2 was built, the developers hardcoded a mechanism allowing the protocol to collect a fraction of the trading fees for itself (specifically routing them to a designated fee receiver address). 
+
+- The standard trading fee on every swap is **0.3%**.
+- The protocol fee is designed to collect exactly **1/6th** of that swap fee. 
+- Therefore, if activated, the protocol would siphon off exactly **0.05%** of every trade, leaving the remaining 0.25% for the Liquidity Providers.
+
+*(Note: Although this specific `mintFee` switch was never actually activated on the main Ethereum Uniswap V2 deployment, it is crucial to understand the math because countless Uniswap forks—like SushiSwap and PancakeSwap—do actively use this mechanism!)*
+
+### Computing the `mintFee`: Core Assumptions
+Because the 0.3% fee isn't "sent" anywhere during a swap, but rather absorbed into the pool to grow $K$, the protocol needs a clever way to figure out how much of that growth it is entitled to. 
+
+To calculate the protocol's 1/6th cut, Uniswap V2 relies on two critical invariants:
+1. **Liquidity Only Grows Between Mints/Burns:** If `mint()` or `burn()` are not currently being called, the underlying liquidity ($K$) of the pool can only increase.
+2. **Growth = Fees:** Any increase in liquidity between these events is purely due to accumulated trading fees (or direct donations).
+
+Therefore, by snapshotting the pool's liquidity at the end of every `mint()` or `burn()` transaction, and then measuring the increase in liquidity the very next time `mint()` or `burn()` is called, the pool can perfectly calculate exactly how much fee value was generated during that time gap!
+
+Based on this calculation, **right before** executing the actual user's `mint()` or `burn()`, Uniswap actively mints brand new LP tokens and sends them directly to the protocol fee recipient. By extracting its 1/6th cut in the form of LP shares rather than raw underlying tokens, the protocol minimizes gas-heavy external transfers and simplifies the accounting.
+
+### Deriving the `mintFee` Formula
+To calculate exactly how many LP tokens to mint to the protocol, Uniswap relies on a strict mathematical derivation. Let's define the notation:
+
+- $s$: The total supply of LP tokens *before* the dilutive protocol fee LP tokens are minted.
+- $\eta$: The amount of new LP tokens that will be minted to the protocol. This must be exactly enough to redeem 1/6th of the profit liquidity.
+- $\ell_1$: The liquidity of the original deposit (the liquidity the LPs originally provided).
+- $\ell_2$: The total current liquidity (the original deposits *plus* the new liquidity generated from swap fees).
+- $d$: The amount of liquidity owed to the LPs, net of the protocol fee. The LPs are entitled to their original deposit ($\ell_1$) plus 5/6ths of the profit.
+- $p$: The amount of liquidity owed to the protocol. This is exactly 1/6th of the profit: $\frac{1}{6}(\ell_2 - \ell_1)$.
+
+To accurately compute $\eta$, the contract relies on this core invariant:
+
+$$ \frac{\eta}{p} = \frac{s}{d} $$
+
+In plain English: The ratio of the protocol's new LP tokens ($\eta$) to the liquidity it is owed ($p$) must be perfectly equal to the ratio of the existing LP tokens ($s$) to the liquidity the LPs are owed ($d$).
