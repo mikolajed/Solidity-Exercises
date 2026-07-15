@@ -285,3 +285,35 @@ Most major DeFi protocols choose a balanced lookback window ranging between **30
 
 ### Overflowing the 32-bit Timestamp
 A 32-bit Unix timestamp will overflow and reset to zero in the year **2106**. However, because Uniswap V2 was written in Solidity 0.5.16 (which naturally wraps math), this isn't an issue. If a consuming contract uses `unchecked` subtraction for `Time2 - Time1`, the binary overflow perfectly cancels itself out to yield the correct elapsed seconds!
+
+## 7. UniswapV2Library Code Walkthrough
+The `UniswapV2Library` is a stateless helper contract used to calculate precise swap math *before* executing trades.
+
+### 1. `getAmountOut()` & `getAmountIn()`
+These two functions calculate exact single-hop swap outputs based on the $x \cdot y = k$ invariant. 
+
+By algebraically isolating $\Delta y$ from the equation $xy = (x + \Delta x)(y - \Delta y)$, the library derives the exact output formula:
+
+$$ \Delta y = \frac{y \Delta x}{x + \Delta x} $$
+
+Because the library must factor in the 0.3% trading fee without using decimals, it uses a clever fractional trick: it multiplies the input amount by **997** and the existing reserves by **1000**, which perfectly maintains the mathematical ratio while extracting the fee!
+
+`getAmountIn()` uses the exact same algebra solved backward to find the required input for a desired output.
+
+### 2. `getAmountsOut()` & `getAmountsIn()`
+Very rarely do users swap across a single pool. Often, they execute "multi-hop" swaps (e.g., Token A $\rightarrow$ Token B $\rightarrow$ Token C).
+
+Instead of making the user calculate the math for every jump, `getAmountsOut()` takes an array of token paths. It simply loops through the path, mathematically passing the exact calculated `amountOut` of the first pool directly into `getAmountOut()` as the `amountIn` for the next pool.
+
+This elegantly chains the algebraic calculations together, telling the Router exactly how many output tokens will emerge at the very end of a massive multi-hop path!
+
+### 3. `getReserves()`
+`getReserves()` is a powerful helper function. Given two token addresses, it uses `CREATE2` to dynamically calculate the pool's address, queries the raw reserves, and automatically sorts them. This guarantees `reserveA` perfectly aligns with `tokenA`, abstracting all the messy numeric sorting logic away from the Router!
+
+### 4. `quote()`
+The `quote()` function calculates the equivalent value of an asset based purely on the current ratio of the reserves (ignoring trading fees and slippage). 
+
+$$ price(\text{foo}) = \frac{reserve(\text{bar})}{reserve(\text{foo})} $$
+
+It is used exclusively to calculate the perfect ratio of Token A to Token B when adding liquidity. 
+**WARNING:** Because `quote()` returns the pure spot price, it is entirely vulnerable to flash loan manipulation. It must *never* be used as an on-chain price oracle!
