@@ -214,3 +214,25 @@ function writeStorageDirectly(uint256 newValue) public {
 }
 ```
 *(Warning: If `myNumber` was packed with other variables in Slot 0, using a raw `sstore` like this would blindly overwrite and destroy the other variables sharing the slot! You would need to use bitwise operations to safely update only a portion of the slot. Furthermore, **`sstore()` does not type check.** Because Yul ignores Solidity's type system, it will happily let you write random bytes into a slot that Solidity expects to be a boolean, permanently breaking your contract logic if you aren't careful!)*
+
+## 5. Low Level Call vs High Level Call in Solidity
+
+A contract in Solidity can interact with and execute functions on other contracts via two distinct methods: 
+1. **High-Level Call:** Calling through a defined contract interface (e.g., `IERC20(token).transfer()`).
+2. **Low-Level Call:** Using the raw `.call()` method directly on an address (e.g., `address.call(...)`).
+
+Despite both methods ultimately compiling down to the exact same `CALL` opcode at the EVM level, the Solidity compiler treats them drastically differently in terms of syntax, type safety, and error handling.
+
+### Error Handling (The Revert Illusion)
+One of the most critical differences is how failures are handled. 
+
+At the raw EVM level, the `CALL` opcode **does not revert the transaction if it fails**. If a contract calls another contract and the destination contract crashes, the `CALL` opcode simply catches the crash, stops it from bubbling up, and pushes a `false` (0) boolean onto the execution stack. It is entirely up to the caller to check that boolean and decide what to do next.
+
+- **High-Level Calls (Automatic Revert):** When you use a high-level interface, the Solidity compiler automatically injects extra bytecode immediately after the `CALL` opcode to check that boolean. If the boolean is `false`, the injected bytecode forces your contract to `REVERT`. This makes high-level calls inherently safe.
+- **Low-Level Calls (Manual Check Required):** When you use a low-level `.call()`, the compiler does *not* inject the safety check. It just hands you the boolean and the return data. If the call fails and you forget to manually `require(success)`, your contract will silently continue executing as if everything succeeded, which is a massive and common security vulnerability!
+
+### The "Empty Address" Trap
+A bizarre quirk of the EVM is how it handles calling an address that has absolutely no bytecode (such as an empty address, an EOA wallet, or the zero address). At the raw EVM level, **a `CALL` to an empty address always returns `true` for success!** 
+
+- **High-Level Calls (Existence Check):** To protect you from this EVM quirk, high-level interface calls automatically inject an `extcodesize` check *before* making the call. If the target address has a code size of 0, the injected bytecode forces the transaction to revert immediately, refusing to make the call.
+- **Low-Level Calls (No Existence Check):** A low-level `.call()` does *not* perform a prior check to verify whether the called address corresponds to a contract. If you accidentally pass an empty address, the low-level call will silently execute, do absolutely nothing, and return `success = true`. If you rely on that boolean without manually verifying the contract's existence first, your app will falsely assume it successfully executed a function that didn't even exist!
