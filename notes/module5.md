@@ -248,3 +248,40 @@ To accurately compute $\eta$, the contract relies on this core invariant:
 $$ \frac{\eta}{p} = \frac{s}{d} $$
 
 In plain English: The ratio of the protocol's new LP tokens ($\eta$) to the liquidity it is owed ($p$) must be perfectly equal to the ratio of the existing LP tokens ($s$) to the liquidity the LPs are owed ($d$).
+
+## 6. How the TWAP Oracle in Uniswap v2 Works
+
+### The Danger of Spot Prices & TWAP
+Relying on the current "spot price" (the simple ratio of reserves) is extremely unsafe. Flash loans allow attackers to borrow massive capital and violently skew the pool's ratio within a single transaction to manipulate consuming protocols. 
+
+To solve this, Uniswap uses a **TWAP** (Time-Weighted Average Price). Because a flash loan only exists within a single block, averaging the price over time completely neutralizes the attack. An attacker would have to leave millions of dollars exposed across multiple blocks to skew the average, which arbitrageurs would immediately steal.
+
+### UQ112.112: Storing the Price
+Because Solidity lacks decimals, Uniswap V2 defines price using a custom **UQ112.112** fixed-point format:
+- **112 bits** for the integer.
+- **112 bits** for the fractional precision.
+
+This highly optimized 224-bit number is packed perfectly alongside a **32-bit timestamp** to fit into a single 256-bit storage slot, saving massive amounts of gas.
+
+### How TWAP is Calculated
+Instead of storing a gas-heavy array of historical prices, Uniswap mathematically optimizes the process: **it does not store any lookback windows or denominators.** 
+
+The solution is that Uniswap **only stores the numerator** of the average formula. Every single time the liquidity ratio changes (via `mint`, `burn`, `swap`, or `sync`), it calculates how long the *previous* price lasted, multiplies it by that price, and adds it to a single running tally (`priceCumulativeLast`).
+
+To find the average price across a specific duration, external contracts must take a snapshot of the accumulator at two different times and use the following mathematical formula:
+
+$$ \text{time-weighted average price} = \frac{P_1T_1 + P_2T_2 + \cdots + P_nT_n}{\sum_{i=1}^{n} T_i} $$
+
+Because the numerator ($P_1T_1 + \dots$) is simply the difference between the two accumulator snapshots, the consuming contract just divides that difference by the total time elapsed (providing its own denominator) to get a perfectly weighted average!
+
+### Limiting the Lookback Window
+Because Uniswap pushes the responsibility of the denominator onto the consuming contract, that contract must make a critical architectural decision: **How long should the lookback window be?**
+
+This creates a strict security tradeoff:
+- **Too Short (e.g., 10 minutes):** The oracle is highly responsive and tracks the true spot market very closely. However, it is much cheaper and easier for a well-capitalized attacker to sustain price manipulation over a brief 10-minute window.
+- **Too Long (e.g., 7 days):** The oracle is completely impervious to manipulation (an attacker would go bankrupt trying to hold the price down against arbitrageurs for a week). However, the price is heavily lagged. If the asset suddenly crashes 50% in one day, the 7-day TWAP will still report an artificially high price, potentially causing catastrophic bad debt in a lending protocol.
+
+Most major DeFi protocols choose a balanced lookback window ranging between **30 minutes and 24 hours**, depending heavily on the liquidity depth of the specific token pair.
+
+### Overflowing the 32-bit Timestamp
+A 32-bit Unix timestamp will overflow and reset to zero in the year **2106**. However, because Uniswap V2 was written in Solidity 0.5.16 (which naturally wraps math), this isn't an issue. If a consuming contract uses `unchecked` subtraction for `Time2 - Time1`, the binary overflow perfectly cancels itself out to yield the correct elapsed seconds!
