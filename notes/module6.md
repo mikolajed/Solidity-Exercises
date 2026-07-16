@@ -317,3 +317,56 @@ success := delegatecall(gas, address, argsOffset, argsSize, retOffset, retSize)
 - **`argsSize`**: The byte size of the `calldata` payload to copy over.
 - **`retOffset`**: The byte offset in memory where the EVM should store the returned data from the sub-context.
 - **`retSize`**: The expected byte size of the returned data.
+
+## 7. EIP-1967 Storage Slots for Proxies
+
+> **Core Concept:** EIP-1967 is an Ethereum standard dictating exactly *where* to place the storage variables for the Implementation contract, the Admin, and the Beacon.
+
+EIP-1967 defines the specific storage slots for the administrative information that Proxy contracts need to successfully route calls. Today, it is the foundational storage layout used by almost all modern proxy architectures. For example:
+- **OpenZeppelin's** industry-standard Transparent Upgradeable Proxy (TUP) and UUPS contracts both rely entirely on EIP-1967 to define their storage logic.
+- **Solady**, the hyper-gas-efficient smart contract library, also provides a UUPS proxy implementation built directly on top of EIP-1967.
+
+> [!IMPORTANT]
+> **EIP-1967 is strictly a Storage Standard.** It only dictates *where* certain variables must be stored and *what logs* must be emitted when they change. It does **not** state how those variables are updated, nor does it enforce access controls on who is allowed to manage them.
+
+### The Two Critical Proxy Variables
+There are two critical variables a proxy needs to successfully operate:
+1. **The Implementation Address:** The address of the Logic contract containing the bytecode to borrow.
+2. **The Admin Address:** The address of the user or multisig allowed to upgrade the proxy to a new implementation.
+
+If we declared these as standard state variables (e.g., `address implementation;`), they would be assigned to `Slot 0` and `Slot 1`. As we learned in Chapter 6, this would immediately cause a devastating Storage Collision with the Logic contract's variables.
+
+### Unstructured Storage (The Keccak-256 Solution)
+To avoid collisions entirely, EIP-1967 uses a pattern called **Unstructured Storage**. Instead of relying on Solidity's sequential slot assignment (0, 1, 2...), the standard dictates that these proxy variables must be stored at very specific, massively randomized slots generated via Keccak-256 hashing.
+
+Because the EVM storage grid has $2^{256}$ slots, the mathematical probability of a Logic contract accidentally generating the exact same hash and colliding with these slots is essentially zero.
+
+**1. The Implementation Slot**
+```solidity
+// Hash of the string "eip1967.proxy.implementation" minus 1
+bytes32 internal constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+```
+
+**2. The Admin Slot**
+```solidity
+// Hash of the string "eip1967.proxy.admin" minus 1
+bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+```
+*(Note: EIP-1967 explicitly subtracts `1` from the hash to mathematically guarantee that the resulting slot has no known preimage, further increasing security).*
+
+**3. The Beacon Slot (Mass Upgrades)**
+EIP-1967 also defines a third slot designed specifically for massive protocol scalability: the **Beacon Slot**.
+```solidity
+// Hash of the string "eip1967.proxy.beacon" minus 1
+bytes32 internal constant BEACON_SLOT = 0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50;
+```
+If a protocol deploys 10,000 identical proxy contracts (such as user-specific smart wallets), upgrading them individually would cost an astronomical amount of gas. Instead, all 10,000 proxies use the **Beacon Pattern**. 
+
+Instead of storing the Implementation Address directly, they store the address of a central "Beacon Contract" in their `BEACON_SLOT`. When a Proxy is called, it queries the Beacon to ask: *"What is the current implementation address?"* and then executes the `delegatecall`. 
+
+This allows an admin to upgrade all 10,000 proxies simultaneously by sending **a single transaction** to update the central Beacon Contract!
+
+### Etherscan Integration
+A massive secondary benefit of the EIP-1967 standard is that it makes it incredibly easy for block explorers like **Etherscan** to automatically detect if they are looking at a Proxy contract. 
+
+Because the `IMPLEMENTATION_SLOT` coordinate is universally standardized, Etherscan can simply query that exact storage slot on any contract. If a valid address is found there, Etherscan instantly knows it is a Proxy. This is what allows Etherscan to offer the popular **"Read as Proxy"** and **"Write as Proxy"** buttons in their UI, seamlessly fetching the ABI from the Logic contract and presenting it to the user as if they were interacting with a single contract.
