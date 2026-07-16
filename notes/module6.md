@@ -231,8 +231,89 @@ At the raw EVM level, the `CALL` opcode **does not revert the transaction if it 
 - **High-Level Calls (Automatic Revert):** When you use a high-level interface, the Solidity compiler automatically injects extra bytecode immediately after the `CALL` opcode to check that boolean. If the boolean is `false`, the injected bytecode forces your contract to `REVERT`. This makes high-level calls inherently safe.
 - **Low-Level Calls (Manual Check Required):** When you use a low-level `.call()`, the compiler does *not* inject the safety check. It just hands you the boolean and the return data. If the call fails and you forget to manually `require(success)`, your contract will silently continue executing as if everything succeeded, which is a massive and common security vulnerability!
 
+#### The Tuple Return
+When executing a low-level call (whether it is `call`, `delegatecall`, or `staticcall`), Solidity always returns a tuple containing two variables:
+```solidity
+(bool success, bytes memory data) = targetAddress.call(abi.encodeWithSignature("myFunction()"));
+```
+- `success`: The boolean indicating if the call succeeded (`true`) or reverted (`false`).
+- `data`: The raw ABI-encoded bytes returned by the target function. You must manually decode this using `abi.decode()` if you want to read the return values.
+
+**When does `success` equal `false`?**
+The `success` boolean will only return `false` if the target execution explicitly or implicitly reverts. There are three primary ways an execution will trigger a revert and return a `false` boolean back to the caller:
+1. **Explicit Reverts:** The target contract explicitly encounters a `REVERT` opcode (e.g., failing a `require()` statement, a `revert()` string, or hitting a custom error).
+2. **Out of Gas:** The target contract exhausts the gas limit provided to the sub-call.
+3. **Prohibited Operations (Panics):** The target contract attempts an illegal EVM operation, such as dividing by zero, accessing an out-of-bounds array index, or causing an arithmetic underflow/overflow.
+
 ### The "Empty Address" Trap
 A bizarre quirk of the EVM is how it handles calling an address that has absolutely no bytecode (such as an empty address, an EOA wallet, or the zero address). At the raw EVM level, **a `CALL` to an empty address always returns `true` for success!** 
 
 - **High-Level Calls (Existence Check):** To protect you from this EVM quirk, high-level interface calls automatically inject an `extcodesize` check *before* making the call. If the target address has a code size of 0, the injected bytecode forces the transaction to revert immediately, refusing to make the call.
 - **Low-Level Calls (No Existence Check):** A low-level `.call()` does *not* perform a prior check to verify whether the called address corresponds to a contract. If you accidentally pass an empty address, the low-level call will silently execute, do absolutely nothing, and return `success = true`. If you rely on that boolean without manually verifying the contract's existence first, your app will falsely assume it successfully executed a function that didn't even exist!
+
+## 6. Delegatecall
+
+To fully understand `DELEGATECALL`, we must first understand the landscape of contract-to-contract communication. The Ethereum Virtual Machine (EVM) offers four distinct opcodes for making calls between contracts:
+
+1. **`CALL` (F1):** The standard method. Executes the target contract's code in the target contract's storage context.
+2. **`CALLCODE` (F2):** *(Deprecated)* The predecessor to Delegatecall. It executed the target's code in the caller's storage context, but failed to preserve `msg.sender` and `msg.value`.
+3. **`STATICCALL` (FA):** A read-only call. It executes the target's code but strictly enforces that no state modifications (`SSTORE`) can occur during the execution. 
+4. **`DELEGATECALL` (F4):** The modern proxy standard. It borrows the target contract's bytecode and executes it entirely within the **caller's storage context**, while perfectly preserving the original `msg.sender` and `msg.value`.
+
+### Executing Logic in the Caller's Environment
+When a contract makes a `delegatecall` to a target smart contract, it is essentially telling the EVM: *"Borrow the logic (bytecode) of the target contract, but execute it entirely inside my own environment."*
+
+To understand what "environment" means, look at how the global context variables behave when a **User** calls **Contract A**, and **Contract A** forwards the call to **Contract B**:
+
+| Global Variable | During a normal `.call()` to B | During a `.delegatecall()` to B |
+| :--- | :--- | :--- |
+| **`msg.sender`** | Contract A | The original User |
+| **`msg.value`** | The ETH Contract A explicitly sent | The ETH the User originally sent to A |
+| **`address(this)`**| Contract B | Contract A |
+| **`Storage`** | Contract B's Database | Contract A's Database |
+
+Because `address(this)` and the storage database remain entirely locked to Contract A, if the borrowed logic updates a balance or changes a variable, the target contract's state remains entirely untouched. Only the calling contract's state is modified!
+
+#### The `CODESIZE` Counterexample
+While almost all context variables point to the Proxy (Contract A), there is one notable exception: the `CODESIZE` opcode. 
+
+If the borrowed logic uses assembly to check the size of the currently executing code (`codesize()`), it will return the bytecode size of the **Target Contract (Contract B)**, not the Proxy. This makes perfect logical sense: the EVM kept the Proxy's state, but it *did* explicitly swap out the code. Therefore, the code currently being evaluated by the EVM belongs to the Target!
+
+### Storage Slot Collision
+Because the borrowed bytecode blindly executes its instructions against the Caller's storage database, extreme caution must be exercised when using `delegatecall`. If the storage layouts of the two contracts do not match perfectly, a **Storage Collision** will occur, inadvertently destroying the Caller's contract data.
+
+Remember from Chapter 4 that the EVM is "blind." It doesn't know variable names; it only knows exact Slot numbers.
+
+**Example of a Collision:**
+- **Proxy Contract (Caller):** Declares `address owner;` at Slot 0.
+- **Logic Contract (Target):** Declares `uint256 balance;` at Slot 0.
+
+If the Proxy uses `delegatecall` to execute a function in the Logic contract that says `balance = 500;`, the EVM will blindly write the number `500` into the Proxy's **Slot 0**. 
+
+Because the Proxy thinks Slot 0 holds the `owner` address, the Proxy's owner has just been accidentally overwritten and corrupted! To prevent this, the Proxy and the Logic contract must always have exactly matching variable declarations in the exact same order.
+
+### Decoupling Implementation from Data (Upgradable Contracts)
+The entire reason we endure the risks of `delegatecall` and storage collisions is to achieve the Holy Grail of Ethereum development: **Upgradable Smart Contracts**. 
+
+By design, smart contract bytecode is immutable once deployed. If there is a bug, it cannot be fixed. However, by using `delegatecall`, we can successfully **decouple the data from the execution logic**:
+- **The Proxy Contract (Data):** Holds all the actual storage, user balances, and state. Its address never changes.
+- **The Logic Contract (Implementation):** Holds the executable bytecode. It holds no state of its own.
+
+If a bug is discovered in the Logic contract, we simply deploy a brand new Logic contract with the fixed bytecode. We then update a single storage variable in the Proxy to point to the new address. Because the Proxy holds all the data, no user balances are lost, and the contract is instantly "upgraded" to use the new logic!
+
+### The Low-Level `delegatecall` Opcode (Yul)
+Under the hood, when you write `target.delegatecall(data)` in high-level Solidity, the compiler translates it into the raw `delegatecall` Yul opcode. 
+
+Unlike a standard `call`, **sending ETH (`value`) to a contract using `delegatecall` is strictly not allowed at the opcode level.** (Because the context is shared, the `msg.value` is already implicitly inherited from the parent transaction).
+
+The raw assembly opcode takes 6 parameters:
+```solidity
+success := delegatecall(gas, address, argsOffset, argsSize, retOffset, retSize)
+```
+- **`gas`**: The amount of gas to forward to the sub-context to execute the bytecode. Any gas not used by the sub-context is seamlessly returned back to the caller. 
+  - **EIP-150 (The 63/64 Rule):** Since the Tangerine Whistle fork, the EVM strictly caps the amount of gas you can forward to a sub-context. You can only forward a maximum of **63/64** of the currently available gas. The remaining 1/64th is forcibly reserved for the parent contract. This ensures the parent always has enough gas left over to cleanly finish its own execution (or process a failure) without running out of gas itself.
+- **`address`**: The account containing the target bytecode you want to borrow and execute.
+- **`argsOffset`**: The byte offset in memory where the input `calldata` payload begins.
+- **`argsSize`**: The byte size of the `calldata` payload to copy over.
+- **`retOffset`**: The byte offset in memory where the EVM should store the returned data from the sub-context.
+- **`retSize`**: The expected byte size of the returned data.
