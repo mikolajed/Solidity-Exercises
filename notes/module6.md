@@ -621,3 +621,70 @@ To summarize the Transparent Upgradeable Proxy architectural pattern:
 2. **The Mechanism:** The `fallback()` function is the only public function on the Proxy. It acts as a traffic cop. If `msg.sender == admin`, the call is routed to internal administrative logic. If `msg.sender != admin`, the call is `delegatecall`ed to the implementation.
 3. **The EIP-1967 Compliance:** TUP uses an `immutable` variable to store the admin to save gas. However, to remain strictly compliant with ERC-1967 (and readable by block explorers like Etherscan), it still redundantly writes the admin address to the standardized EIP-1967 admin storage slot during deployment, even though the contract itself never needs to read from that slot.
 4. **The ProxyAdmin:** Because the Proxy's admin is an `immutable` variable and mathematically cannot be changed, the admin is set to an intermediate smart contract called `ProxyAdmin`. The owner of the `ProxyAdmin` contract can freely interact with the Dapp as a normal user, and can easily change administrative rights by transferring ownership of the `ProxyAdmin` contract.
+
+## 10. The Beacon Proxy Pattern Explained
+
+> **Core Concept:** A Beacon Proxy is a pattern where multiple proxies share the same implementation contract, allowing an admin to upgrade them all simultaneously in a single transaction.
+
+### How it Works
+Instead of storing the Logic address locally, proxies store the address of a central **Beacon Contract**. The Beacon acts as the absolute **source of truth** (hence the name), holding the current implementation address and returning it via a public function.
+
+When a user calls the Proxy:
+1. The Proxy `staticcall`s the Beacon to get the current implementation address.
+2. The Proxy `delegatecall`s to that returned address.
+
+```mermaid
+flowchart LR
+    user((User))
+    
+    subgraph Architecture
+        beacon[Beacon Contract]
+        proxy[Proxy]
+        impl[Implementation]
+    end
+
+    user -->|1. Incoming tx| proxy
+    proxy -->|"2a. staticcall implementation()"| beacon
+    beacon -.->|2b. returns address| proxy
+    proxy -->|3. delegatecall| impl
+    
+    style beacon fill:#F05252,color:#fff
+    style proxy fill:#3F83F8,color:#fff
+    style impl fill:#0E9F6E,color:#fff
+```
+
+### Upgrading the Beacon
+To perform a network-wide upgrade, the Admin simply calls `upgradeTo(newImplementationAddress)` directly on the **Beacon Contract**. By updating this stored address just once, the Admin instantly reroutes all connected proxies to the new logic simultaneously!
+
+### EIP-1967 Compliance (`BeaconProxy.sol`)
+For block explorers like Etherscan to know that they are looking at a Beacon Proxy, the proxy must strictly adhere to the EIP-1967 specification. 
+
+Because it is specifically a Beacon Proxy, it must store the Beacon's address in the standardized EIP-1967 Beacon storage slot:
+`0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50`
+*(Computed from `bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)`)*
+
+Similar to how the Transparent Upgradeable Proxy treats its admin variable, this EIP-1967 storage slot is **not actually used** by the `BeaconProxy` internal logic. It is simply a redundant signal broadcasted for block explorers. 
+
+The actual Beacon address is stored inside the `BeaconProxy` as an `immutable` variable to save massive amounts of gas, since the Proxy's designated Beacon contract mathematically never changes!
+
+### Gas Optimization: EIP-2930 Access Lists
+Because of the architectural design of a Beacon Proxy, **every single transaction** sent to the proxy must first perform an external `staticcall` to the Beacon contract to read the implementation address from its storage.
+
+To optimize gas costs, developers and frontends should always use **EIP-2930 Access List transactions** when interacting with a Beacon Proxy. 
+
+By passing an Access List that pre-declares the address of the Beacon contract and the specific storage slot holding the implementation address, the EVM can "pre-warm" these resources before the transaction even begins executing. This significantly reduces the cold-access gas penalties of the cross-contract call and storage read, making the Beacon Proxy pattern much more economically viable for high-frequency user interactions.
+
+### The BeaconProxyFactory
+The primary use case of the Beacon Proxy pattern is to efficiently manage massive numbers of identical proxies (such as assigning a unique smart contract wallet to 10,000 different users).
+
+Because deploying these proxies manually would be a massive hassle, this architecture is almost universally paired with a **Factory Contract**.
+
+The `BeaconProxyFactory` is a smart contract designed simply to "stamp out" new `BeaconProxy` clones on demand. When a new user joins the protocol, the Factory automatically deploys a new `BeaconProxy` and passes the central Beacon's address directly into the new proxy's `constructor()`. This guarantees that every newly deployed proxy is instantly linked to the correct, globally synchronized source of truth.
+
+### Tooling: OpenZeppelin Upgrades Plugin
+If you are developing your contracts locally, you do not need to write these complex factory deployment scripts from scratch. OpenZeppelin provides an official **Upgrades Plugin** for both Hardhat and Foundry that handles the Beacon proxy architecture natively.
+
+Deploying and managing a Beacon ecosystem is as simple as calling their built-in functions:
+1. **`deployBeacon(LogicContract)`**: Deploys the Logic contract and the central Beacon contract, instantly linking them together.
+2. **`deployBeaconProxy(BeaconAddress)`**: Stamps out a new proxy connected to your central Beacon.
+3. **`upgradeBeacon(BeaconAddress, NewLogicContract)`**: Automatically deploys the new Logic contract and updates the central Beacon to point to it, instantly upgrading all of your proxies simultaneously!
