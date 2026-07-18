@@ -802,3 +802,44 @@ Here is the exact base bytecode of the MetaProxy (before any metadata is appende
 ```
 
 When a Factory deploys a MetaProxy, it simply takes this base string, drops the Implementation address over the placeholder, and then **appends the unique metadata bytes to the very end of the string** before calling `create`.
+
+## 13. noDelegateCall Explained
+
+The `noDelegateCall` modifier is a smart contract security mechanism used to explicitly prevent a contract (or specific functions within it) from being executed via a `delegatecall`. 
+
+In this chapter, we will first explore the technical mechanism of exactly how this restriction is accomplished at the EVM level, and then we will discuss the critical security motivations that make this modifier necessary in modern proxy architectures.
+
+### Motivation: The Uniswap V3 Loophole
+To prevent competitors from stealing their code, Uniswap V3 was launched under a strict Business Source License (BSL). However, competitors could have exploited a major technical loophole: **Deploying a minimal proxy pointing directly to the official Uniswap V3 Logic contract.**
+
+This would allow them to run a competing exchange without ever actually copying the proprietary code. 
+
+To permanently block this, Uniswap applied the `noDelegateCall` modifier across their codebase. This explicitly banned unauthorized proxies from "borrowing" their logic.
+
+### The Core Mechanism
+Because `noDelegateCall` is a standard modifier, it can be applied granularly to specific state-changing functions, leaving harmless functions accessible.
+
+It relies entirely on checking the `address(this)` execution context:
+1. During deployment, the Logic contract saves its own address to an `immutable` variable. 
+2. Because `delegatecall` executes in the caller's context, `address(this)` evaluates to the Proxy's address. 
+3. If the current `address(this)` does not match the saved deployment address, the transaction instantly reverts.
+
+```solidity
+contract NoDelegateCallContract {
+    address private immutable ORIGINAL_ADDRESS;
+
+    constructor() {
+        ORIGINAL_ADDRESS = address(this); // Save original deployment address
+    }
+
+    modifier noDelegateCall() {
+        // Reverts if executed inside a Proxy's context via delegatecall
+        require(address(this) == ORIGINAL_ADDRESS, "Delegatecall forbidden");
+        _;
+    }
+
+    function proprietaryLogic() external noDelegateCall {
+        // Safe from vampire proxies
+    }
+}
+```
