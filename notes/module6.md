@@ -688,3 +688,101 @@ Deploying and managing a Beacon ecosystem is as simple as calling their built-in
 1. **`deployBeacon(LogicContract)`**: Deploys the Logic contract and the central Beacon contract, instantly linking them together.
 2. **`deployBeaconProxy(BeaconAddress)`**: Stamps out a new proxy connected to your central Beacon.
 3. **`upgradeBeacon(BeaconAddress, NewLogicContract)`**: Automatically deploys the new Logic contract and updates the central Beacon to point to it, instantly upgrading all of your proxies simultaneously!
+
+## 11. EIP-1167: Minimal Proxy Standard with Initialization (Clone pattern)
+
+> **Core Concept:** EIP-1167 (Minimal Proxy) is an extremely gas-optimized proxy architecture. Unlike the regular proxy pattern, several "clones" can be deployed that all point to the exact same shared implementation contract. However, unlike TUP or Beacon proxies, **Clones cannot be upgraded.** Their implementation address is hardcoded directly into their bytecode during deployment.
+
+### The 55-Byte Bytecode
+The magic of the Minimal Proxy is that it does not use a massive Solidity contract. Instead, it is deployed using raw, highly-optimized EVM bytecode that totals exactly **55 bytes**.
+
+This incredibly concise 55-byte sequence contains everything a proxy needs to function, cleanly broken down into the following components:
+1. **The Init Code:** Used once during deployment to place the runtime bytecode on-chain.
+2. **The Runtime Code:** Copies the incoming transaction calldata into memory.
+3. **The 20-Byte Address:** The hardcoded address of the shared implementation contract.
+4. **The Delegatecall:** Forwards the calldata to the hardcoded address.
+5. **The Return/Revert:** Captures the returned data from the `delegatecall` and explicitly returns it to the user (or triggers a `revert` if the internal call failed).
+
+Here is the exact bytecode string defined by EIP-1167. Notice the 20-byte `bebebe...` placeholder sequence in the middle. During deployment, a Factory contract dynamically replaces this placeholder with the actual address of your Logic contract:
+
+```text
+3d602d80600a3d3981f3363d3d373d3d3d363d73bebebebebebebebebebebebebebebebebebebebe5af43d82803e903d91602b57fd5bf3
+```
+
+### The Factory Deployment Assembly
+To deploy this bytecode on-chain, a Factory contract must stitch together the final 55-byte string dynamically in memory. It does this by splitting the bytecode into three chunks (Prefix, Address, Suffix) and utilizing the `mstore` assembly opcode. 
+
+Once the bytecode is pieced together in memory, the factory calls the `create` opcode to deploy the new clone:
+
+```solidity
+contract MinimalProxyFactory {
+    address[] public proxies;
+
+    function deployClone(address _implementationContract) external returns (address) {
+        bytes20 implementationContractInBytes = bytes20(_implementationContract);
+        address proxy;
+
+        assembly {
+            // Load the free memory pointer
+            let clone := mload(0x40)
+            
+            // 1. Store the first 20 bytes (The Creation Code + Runtime Prefix)
+            mstore(
+                clone,
+                0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000
+            )
+
+            // 2. Store the 20-byte Implementation Address at an offset of 0x14 (20 bytes)
+            mstore(add(clone, 0x14), implementationContractInBytes)
+
+            // 3. Store the remaining 15-byte Suffix at an offset of 0x28 (40 bytes)
+            mstore(
+                add(clone, 0x28),
+                0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000
+            )
+
+            // Deploy the 55-byte (0x37) sequence in memory using the CREATE opcode
+            proxy := create(0, clone, 0x37)
+        }
+
+        // Immediately initialize the new proxy to prevent front-running!
+        ImplementationContract(proxy).initializer();
+        proxies.push(proxy);
+        
+        return proxy;
+    }
+}
+```
+
+### OpenZeppelin `Clones.sol` Library
+While understanding the raw assembly is essential for mastering the EVM, modern developers rarely write these `mstore` blocks from scratch. 
+
+Instead, **OpenZeppelin provides the official `Clones.sol` library**, which abstracts all of this raw memory manipulation away into simple, safe helper functions. To deploy an EIP-1167 proxy in production, you simply import the library and call its built-in functions:
+
+```solidity
+import "@openzeppelin/contracts/proxy/Clones.sol";
+
+contract ModernProxyFactory {
+    // Attach the library functions to the address type
+    using Clones for address; 
+
+    function deployClone(address logicContract) external returns (address) {
+        // Automatically stitches the 55-byte bytecode together and calls CREATE
+        address proxy = logicContract.clone();
+        
+        // Initialize it immediately
+        ImplementationContract(proxy).initializer();
+        
+        return proxy;
+    }
+    
+    function deployDeterministicClone(address logicContract, bytes32 salt) external returns (address) {
+        // Same as above, but uses CREATE2 to deploy to a predictable, predetermined address!
+        address proxy = logicContract.cloneDeterministic(salt);
+        
+        ImplementationContract(proxy).initializer();
+        
+        return proxy;
+    }
+}
+```
