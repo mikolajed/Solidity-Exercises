@@ -786,3 +786,19 @@ contract ModernProxyFactory {
     }
 }
 ```
+
+## 12. EIP-3448: MetaProxy Standard (Minimal Proxy with Immutable Metadata)
+
+> **Core Concept:** The EIP-3448 MetaProxy standard can be viewed as a direct extension to the EIP-1167 Minimal Proxy Standard. It allows unique, immutable metadata to be attached directly to the end of each clone’s runtime bytecode.
+
+The normal EIP-1167 minimal proxy standard allows us to parameterize the creation of a clone, but this requires executing an extra `initialize()` transaction immediately after deployment to save those parameters into storage. The MetaProxy standard allows users to bypass this step entirely and parameterize the values they care about directly in the clone’s bytecode rather than using storage, which significantly reduces gas costs!
+
+### The MetaProxy Bytecode
+Just like the EIP-1167 standard, the MetaProxy is deployed using a raw, highly-optimized EVM hex string. Notice the familiar 20-byte `bebebe...` placeholder sequence where the Factory will insert the shared Implementation contract address.
+
+Here is the exact base bytecode of the MetaProxy (before any metadata is appended):
+```text
+600b380380600b3d393df3363d3d373d3d3d3d60368038038091363936013d73bebebebebebebebebebebebebebebebebebebebe5af43d3d93803e603457fd5bf3
+```
+
+When a Factory deploys a MetaProxy, it simply takes this base string, drops the Implementation address over the placeholder, and then **appends the unique metadata bytes to the very end of the string** before calling `create`.
