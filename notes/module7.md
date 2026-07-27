@@ -86,3 +86,26 @@ A Q number is represented as **$Qm.n$**, where $m$ is the number of bits for the
 * **Division:** If we divide two $Qm.n$ numbers, we must first left-shift the numerator by $n$ bits (`(A << n) / B`).
 
 > **Warning:** Both division and multiplication of Q numbers must be carefully written to avoid temporary integer overflow during intermediate steps.
+
+## 4. Square Root Price in Uniswap V3
+
+In Uniswap V2, the protocol tracks token reserves and derives the spot price, $p_x = \frac{y}{x}$, and total liquidity, $L = \sqrt{xy}$, where $x$ and $y$ are the reserves of tokens X and Y.
+
+Uniswap V3, instead, tracks the current price and liquidity, and derives the reserves. This calculation is complex and will be covered in later chapters.
+
+Uniswap V3 actually stores the square root of the price, $\sqrt{P}$, instead of the price itself.
+
+The square root of the price is stored in the field variable `sqrtPriceX96` of the struct `Slot0`.
+
+The relationship between $\sqrt{p}$ and `sqrtPriceX96` is that $\sqrt{p}$ is the actual square root of the price, while `sqrtPriceX96` represents the square root of a token’s price in the **Q64.96** format.
+
+This relationship can be expressed with a simple formula. To convert $\sqrt{p}$ to `sqrtPriceX96`, we use:
+
+$$\text{sqrtPriceX96} = \text{floor}(\sqrt{p} \times 2^{96})$$
+
+To convert back `sqrtPriceX96` to $\sqrt{p}$, we use:
+
+$$\sqrt{p} = \frac{\text{sqrtPriceX96}}{2^{96}}$$
+
+### Why Use Q64.96 to Store the Square Root of the Price?
+This is not an easy question to answer, and the protocol team could have chosen a different Q number format. Since they decided to pack the square root of the price together with the current tick and other information in a single 256-bit storage slot (`Slot0`), the space left for the square root of the price was **160 bits** ($64 + 96 = 160$).
