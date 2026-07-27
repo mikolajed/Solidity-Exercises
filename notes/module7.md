@@ -109,3 +109,19 @@ $$\sqrt{p} = \frac{\text{sqrtPriceX96}}{2^{96}}$$
 
 ### Why Use Q64.96 to Store the Square Root of the Price?
 This is not an easy question to answer, and the protocol team could have chosen a different Q number format. Since they decided to pack the square root of the price together with the current tick and other information in a single 256-bit storage slot (`Slot0`), the space left for the square root of the price was **160 bits** ($64 + 96 = 160$).
+
+## 5. Tick Limits in Uniswap V3
+
+### The Highest Tick Index
+In the previous chapter, we saw that the protocol stores the square root of the token price as fixed-point numbers of type Q64.96. This type of variable has a maximum whole number value of $2^{64}$. Consequently, the highest price it can store is $2^{128}$.
+
+Using $p(i) = 2^{128}$ in the formula above, we have that:
+
+$$i = \log_{1.0001}(2^{128}) = 887272$$
+
+The minimum and maximum tick indexes are hardcoded as `MIN_TICK` ($-887272$) and `MAX_TICK` ($887272$) in the Uniswap V3 `TickMath` library.
+
+### Why Use `int24` for Tick Indexes?
+The number of bits required to store $887,272$ is $\log_2(887272) \approx 20$. Since we also have negative ticks, we need to store twice that amount of ticks. To hold both the original positive numbers and their negative values, our tick variable needs to support 21 bits.
+
+Since Solidity only supports `int` sizes that are multiples of 8, the smallest `int` size that will hold all the ticks we need is `int24`. Therefore, Uniswap V3 uses `int24` to hold tick indexes.
