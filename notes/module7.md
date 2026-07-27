@@ -69,3 +69,20 @@ By using tick indexes, Uniswap V3 maps a non-linear price space into a linear in
 Uniswap V3 keeps track of the "active tick", "current tick", or sometimes just "tick". The **current tick** is defined as the current price rounded down to the nearest tick.
 
 In code, the protocol stores the current tick (along with `sqrtPriceX96`) in storage slot 0 inside a struct named `Slot0`.
+
+## 3. Q Number Format
+
+Q numbers are a design pattern to hold fractional numbers in Ethereum.
+
+They are more efficient than standard decimal representation since conversion and scaling can be accomplished with bitshifting.
+
+A Q number is represented as **$Qm.n$**, where $m$ is the number of bits for the integer portion and $n$ is the number of bits for the fractional portion. Each bit after the binary point represents fractional values of $\frac{1}{2}, \frac{1}{4}, \frac{1}{8}, \dots$ etc.
+
+* **Conversion:** An integer can be converted into a Q number by doing a left bitshift by $n$ bits (`a << n`). A Q number can be converted back to an integer by truncating the fraction bits via right-shifting by $n$ bits (`q >> n`).
+* **Floating Point Equivalence:** If we divide a Q number by $2^n$ in a language that supports floating points, we get its true decimal value.
+* **Ratios:** Given two integers $a$ and $b$ (ensuring $a$ fits within $m$ bits), we compute their ratio as a $Qm.n$ number via `(a << n) / b`. The total number of bits required to hold the fixed-point number is $m + n$.
+* **Addition:** Q numbers can be added together "as is" as long as their fractional bits $n$ are aligned.
+* **Multiplication:** If we multiply two $Qm.n$ numbers together, we must right-shift the result by $n$ bits (`(A * B) >> n`) so the result maintains $n$ fractional bits.
+* **Division:** If we divide two $Qm.n$ numbers, we must first left-shift the numerator by $n$ bits (`(A << n) / B`).
+
+> **Warning:** Both division and multiplication of Q numbers must be carefully written to avoid temporary integer overflow during intermediate steps.
