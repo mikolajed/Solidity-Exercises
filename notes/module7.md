@@ -14,8 +14,8 @@ By applying `if` conditions at price boundaries, the pool adjusts the constant p
 
 $$xy = \begin{cases} 0.1k & \text{if } p < 0.99 \text{ or } p > 1.01 \\ 10k & \text{if } 0.99 \le p \le 1.01 \end{cases}$$
 
-* Within the active price range ($[0.99, 1.01]$), the virtual constant product is multiplied (e.g. $10k$), offering much higher liquidity depth and lower slippage.
-* Outside this range, liquidity drops off (e.g. $0.1k$), shifting the effective constant product curve.
+- Within the active price range ($[0.99, 1.01]$), the virtual constant product is multiplied (e.g. $10k$), offering much higher liquidity depth and lower slippage.
+- Outside this range, liquidity drops off (e.g. $0.1k$), shifting the effective constant product curve.
 
 ![Concentrated Liquidity Piecewise Curve](./img/concentrated_liquidity_curve.png)
 
@@ -112,9 +112,9 @@ This is not an easy question to answer, and the protocol team could have chosen 
 
 ## 5. Tick Limits in Uniswap V3
 
-### The Highest Tick Index
 In the previous chapter, we saw that the protocol stores the square root of the token price as fixed-point numbers of type Q64.96. This type of variable has a maximum whole number value of $2^{64}$. Consequently, the highest price it can store is $2^{128}$.
 
+### The Highest Tick Index
 Using $p(i) = 2^{128}$ in the formula above, we have that:
 
 $$i = \log_{1.0001}(2^{128}) = 887272$$
@@ -125,3 +125,10 @@ The minimum and maximum tick indexes are hardcoded as `MIN_TICK` ($-887272$) and
 The number of bits required to store $887,272$ is $\log_2(887272) \approx 20$. Since we also have negative ticks, we need to store twice that amount of ticks. To hold both the original positive numbers and their negative values, our tick variable needs to support 21 bits.
 
 Since Solidity only supports `int` sizes that are multiples of 8, the smallest `int` size that will hold all the ticks we need is `int24`. Therefore, Uniswap V3 uses `int24` to hold tick indexes.
+
+## 6. Uniswap V3 Factory and the Relationship Between Tick Spacing and Fees
+
+* **Multiple Requirement:** Not all ticks in a pool can be used—only those that are exact multiples of the tick spacing (`tick % tickSpacing == 0`) are allowed.
+* **Factory Configuration:** The relationship between tick spacing and fees is set in a mapping (`feeAmountTickSpacing`) inside the Factory contract. Governance can add more tick spacing and fee options using `enableFeeAmount`.
+* **High Volatility / Low Liquidity Pairs:** Frequent tick crossing results in higher gas costs, as we will learn when studying swaps. Therefore, pools with higher price volatility and/or lower liquidity should use larger tick spacing to minimize the frequency of allowed ticks being crossed.
+* **Low Volatility / High Liquidity Pairs:** On the other hand, for pools with lower price volatility and/or highly liquid pairs, tick spacing can be smaller, as liquidity providers will have a clearer idea of where to concentrate their liquidity.
