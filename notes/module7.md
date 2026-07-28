@@ -184,3 +184,69 @@ Uniswap V3 needs to compute `sqrtPriceX96` $= \sqrt{1.0001^{\text{tick}}} \cdot 
 When raising a standard integer to an integer power, it is generally more efficient to use the EVM's built-in opcode (`EXP` or `**` in Solidity).
 
 However, the EVM `EXP` opcode operates purely on integers and does **not** include the fixed-point bit-shifting / normalization step required for Q numbers after each multiplication. Therefore, if at least one of $b$ or $x$ in $b^x$ is a fixed-point (Q format) number, we cannot use the EVM's native `EXP` opcode, and must use custom fixed-point Square and Multiply logic.
+
+## 9. TickMath `getSqrtRatioAtTick`
+
+The `TickMath.getSqrtRatioAtTick(int24 tick)` function calculates $\text{sqrtPriceX96} = \sqrt{1.0001^{\text{tick}}} \cdot 2^{96}$ on-chain using the Square and Multiply algorithm.
+
+### Function Implementation & Breakdown
+
+```solidity
+/// @notice Calculates sqrt(1.0001^tick) * 2^96
+/// @dev Throws if |tick| > max tick
+/// @param tick The input tick for the above formula
+/// @return sqrtPriceX96 A Fixed point Q64.96 number representing the sqrt of the ratio of the two assets at the given tick
+function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
+    // 1. Compute Tick Absolute Value
+    uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
+    
+    // 2. Check Tick is in Range
+    require(absTick <= uint256(MAX_TICK), 'T');
+
+    // 3. Compute ratio = \sqrt(1.0001^{-|i|}) using square and multiply
+    uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fd37aa2d162d1a594001 : 0x100000000000000000000000000000000;
+    if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
+    if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
+    if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
+    if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
+    if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
+    if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
+    if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
+    if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
+    if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
+    if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
+    if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
+    if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
+    if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
+    if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
+    if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
+    if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
+    if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
+    if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
+    if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+
+    // 4. Compute the reciprocal if the tick was positive
+    if (tick > 0) ratio = type(uint256).max / ratio;
+
+    // 5. Convert Q128.128 to Q64.96 rounding up
+    sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
+}
+```
+
+### Key Technical Notes
+
+1. **Pre-computed Values:** The 19 hex constants in Step 3 are pre-computed magic numbers for $\frac{1}{\sqrt{1.0001^{2^i}}}$ in **Q128.128** format (scaled by $2^{128}$).
+2. **Internal Q128.128 Precision:** By maintaining internal calculations in **Q128.128** format, intermediate multiplications (`(ratio * CONSTANT) >> 128`) preserve maximum precision without overflowing the 256-bit word.
+3. **The Reciprocal Trick:** The algorithm computes $\frac{1}{\sqrt{1.0001^{|\text{tick}|}}}$ first for all ticks. If `tick > 0`, it takes the reciprocal (`type(uint256).max / ratio`), avoiding the need for two separate lookup tables.
+4. **Rounding Up to Q64.96:** Step 5 converts the Q128.128 value down to Q64.96 by right-shifting 32 bits (`>> 32`) since $128 - 32 = 96$, and adds `1` if there is a remainder to round up conservatively.
+
+> **Deep Dive: Why Compute Reciprocals ($\le 1.0$) First? (Overflow vs. Underflow in Bits)**
+> 
+> * **Why not compute positive powers ($> 1.0$) directly?**
+>   If the algorithm pre-computed positive constants ($\sqrt{1.0001^{2^i}} > 1.0$), as $2^i$ reaches $2^{19}$, the term $\sqrt{1.0001^{524288}} \approx 2^{38.3}$ requires **39 integer bits**. When combined with 128 fractional bits in Q128.128 format, the stored number takes up **167 bits** ($39 + 128$). Multiplying two 167-bit numbers produces a **334-bit intermediate product** ($167 + 167 = 334$), which **exceeds the 256-bit limit of `uint256` and overflows**!
+> 
+> * **Why does computing reciprocals ($\le 1.0$) prevent overflow?**
+>   Because every pre-computed constant $\frac{1}{\sqrt{1.0001^{2^i}}}$ is $\le 1.0$, it requires **0 integer bits** $+ 128 \text{ fractional bits} = \mathbf{128 \text{ bits}}$. Multiplying two 128-bit numbers produces a **256-bit product** ($128 + 128 = 256$), which fits **exactly** inside a 256-bit `uint256` word without overflowing before right-shifting by 128 (`>> 128`)!
+> 
+> * **Why doesn't precision underflow occur?**
+>   Even at the maximum negative tick limit ($-887,272$), the resulting ratio is $\approx 2^{-65.7}$. When scaled by $2^{128}$ in Q128.128 format, the stored integer value is still $2^{128 - 65.7} = 2^{62.3}$—requiring **63 bits**, which is vastly above 0 bits (underflow)! Thanks to the 128 fractional bits, underflow is mathematically impossible within the allowed tick bounds.
