@@ -250,3 +250,52 @@ function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPrice
 > 
 > * **Why doesn't precision underflow occur?**
 >   Even at the maximum negative tick limit ($-887,272$), the resulting ratio is $\approx 2^{-65.7}$. When scaled by $2^{128}$ in Q128.128 format, the stored integer value is still $2^{128 - 65.7} = 2^{62.3}$—requiring **63 bits**, which is vastly above 0 bits (underflow)! Thanks to the 128 fractional bits, underflow is mathematically impossible within the allowed tick bounds.
+
+## 10. Real and Virtual Reserves in Uniswap V3
+
+In Uniswap V3, liquidity positions operate on a concentrated price range $[p_a, p_b]$. To support concentrated liquidity mathematically, Uniswap V3 distinguishes between **virtual reserves** and **real reserves**.
+
+### 1. Virtual vs. Real Reserves
+* **Virtual Reserves ($x_v, y_v$):** Imaginary reserves that allow concentrated liquidity positions to use the standard constant-product formula $x_v \cdot y_v = L^2$.
+* **Real Reserves ($x_r, y_r$):** The actual physical token balances held in the smart contract for that position.
+
+### 2. Calculating Virtual Reserves from $L$ and $\sqrt{p}$
+Using the invariant $x_v \cdot y_v = L^2$ and price definition $p = \frac{y_v}{x_v} \implies y_v = p \cdot x_v$, we derive the virtual reserves directly from liquidity $L$ and price $\sqrt{p}$:
+
+$$x = \frac{L}{\sqrt{p}}$$
+
+$$y = L \sqrt{p}$$
+
+> **On-Chain Gas Optimization:** Notice that both virtual reserve formulas ($x = \frac{L}{\sqrt{p}}$ and $y = L \sqrt{p}$) depend directly on $\sqrt{p}$ rather than raw price $p$. 
+> Computing square root operations ($\sqrt{\cdot}$) on-chain requires iterative algorithms (e.g., Newton-Raphson), which are **extremely gas-expensive**. To optimize EVM execution, Uniswap V3 directly tracks $\sqrt{p}$ (`sqrtPriceX96`) and liquidity $L$ in contract storage. This allows all swap and reserve calculations to execute using cheap multiplications and divisions, completely bypassing the need for on-chain square root calculations!
+
+### 3. Relationship Between Virtual and Real Reserves
+For a liquidity position bounded by price range $[p_a, p_b]$, real reserves ($x_r, y_r$) are obtained by shifting the virtual reserves:
+
+$$x_v = x_r + \frac{L}{\sqrt{p_b}} \implies x_r = x_v - \frac{L}{\sqrt{p_b}} = \frac{L}{\sqrt{p}} - \frac{L}{\sqrt{p_b}}$$
+
+$$y_v = y_r + L \cdot \sqrt{p_a} \implies y_r = y_v - L\sqrt{p_a} = L\sqrt{p} - L\sqrt{p_a}$$
+
+### 4. Real Reserves Plot & Segment Endpoints
+
+The diagram below visualizes real reserves ($x_r, y_r$) along an active concentrated liquidity curve segment:
+
+![Real Reserves Plot](./img/real_reserves_plot.png)
+
+### 5. Segment Real Reserves & Price Position Rules
+
+> **Key Rule:** A concentrated liquidity segment must always hold **at least one** real token reserve, but does **not** necessarily hold both!
+
+Depending on where the current pool price ray ($y = px$) lies relative to a position's tick range $[p_{min}, p_{max}]$:
+
+1. **Segment Above Price Ray ($p > p_{max}$ - Grey Segment):** 
+   The market price has exceeded the position's range. All Token X has been converted into Token Y. The position holds **only Token Y ($y_r > 0$)** and **zero Token X ($x_r = 0$)**.
+2. **Segment Intersected by Price Ray ($p_{min} \le p \le p_{max}$ - Purple Segment):** 
+   The market price is active within the position's range. The position holds **both real reserves ($x_r > 0$ and $y_r > 0$)**.
+3. **Segment Below Price Ray ($p < p_{min}$ - Orange Segment):** 
+   The market price is below the position's range. All Token Y has been converted into Token X. The position holds **only Token X ($x_r > 0$)** and **zero Token Y ($y_r = 0$)**.
+
+### 6. Segment Inactivity & Hand-off Mechanism
+* **Local Uniswap V2 Behavior:** While the current price is inside $[p_a, p_b]$, the active curve segment acts as an independent "mini Uniswap V2 pool" adhering to $x_v \cdot y_v = L^2$.
+* **Reserve Depletion & Inactivity:** As soon as trading pushes the price past $p_b$ or $p_a$, one of the real token reserves depletes entirely to $0$. The segment becomes **inactive**—it no longer facilitates trades or earns swap fees.
+* **Segment Takeover:** The adjacent segment for the neighboring tick range immediately **takes over** as the new active liquidity provider, allowing the pool price to transition seamlessly across ticks without disruption.
