@@ -157,3 +157,30 @@ In Solidity, the conversion between tick indexes and `sqrtPriceX96` is handled b
 * **`getTickAtSqrtRatio(uint160 sqrtPriceX96)`**: Calculates the tick index $i$ given a `sqrtPriceX96` value.
 
 > **Security Warning:** It is **not safe** for external smart contracts to directly consume `slot0.sqrtPriceX96` to determine asset prices for valuation, collateral, or liquidation logic. `Slot0` stores the instantaneous spot price, which can be manipulated within a single transaction via flash loans or sandwich attacks. Protocols should instead rely on Uniswap V3 TWAP (Time-Weighted Average Price) oracles.
+
+## 8. Square and Multiply Algorithm
+
+The **Square and Multiply** algorithm (exponentiation by squaring) allows computing $x^k$ in $O(\log k)$ time rather than $O(k)$ linear time by leveraging the binary representation of the exponent $k$.
+
+### 1. Integer Exponents
+For standard positive integer exponents, any exponent $k$ is expressed in binary:
+$$k = b_0 \cdot 2^0 + b_1 \cdot 2^1 + b_2 \cdot 2^2 + \dots + b_m \cdot 2^m \quad (b_i \in \{0, 1\})$$
+
+* The algorithm starts with the base term $x^{2^0} = x^1$.
+* In each step, the base term is repeatedly squared: $x^1 \to x^2 \to x^4 \to x^8 \to x^{16} \dots$
+* Whenever bit $b_i = 1$, the accumulator is multiplied by that step's squared term.
+
+### 2. Fractional Exponents (e.g., $x^{a/b}$)
+When computing a fractional exponent such as $x^{7/3}$:
+1. **Compute Root Base First:** First compute the fundamental $b$-th root base: $y = x^{1/b} = x^{1/3} = \sqrt[3]{x}$.
+2. **Apply Square & Multiply on Integer Numerator:** Then apply the Square and Multiply algorithm to compute $y^a = (x^{1/3})^7 = x^{7/3}$ using the integer exponent $a = 7$.
+
+### 3. Application in Uniswap V3 `TickMath`
+Uniswap V3 needs to compute `sqrtPriceX96` $= \sqrt{1.0001^{\text{tick}}} \cdot 2^{96} = (1.0001^{1/2})^{\text{tick}} \cdot 2^{96}$:
+1. **Pre-computed Base:** The protocol pre-computes the fundamental square-root base $\sqrt{1.0001} \approx 1.00004999875...$ in Q64.96 fixed-point format.
+2. **Binary Exponentiation:** It then executes Square and Multiply over the integer `tick` using pre-computed constants for $(\sqrt{1.0001})^{2^i}$ (or the reciprocal for negative ticks).
+
+### Why Not Just Use an Exponent Opcode (`EXP`)?
+When raising a standard integer to an integer power, it is generally more efficient to use the EVM's built-in opcode (`EXP` or `**` in Solidity).
+
+However, the EVM `EXP` opcode operates purely on integers and does **not** include the fixed-point bit-shifting / normalization step required for Q numbers after each multiplication. Therefore, if at least one of $b$ or $x$ in $b^x$ is a fixed-point (Q format) number, we cannot use the EVM's native `EXP` opcode, and must use custom fixed-point Square and Multiply logic.
