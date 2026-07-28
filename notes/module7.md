@@ -132,3 +132,28 @@ Since Solidity only supports `int` sizes that are multiples of 8, the smallest `
 * **Factory Configuration:** The relationship between tick spacing and fees is set in a mapping (`feeAmountTickSpacing`) inside the Factory contract. Governance can add more tick spacing and fee options using `enableFeeAmount`.
 * **High Volatility / Low Liquidity Pairs:** Frequent tick crossing results in higher gas costs, as we will learn when studying swaps. Therefore, pools with higher price volatility and/or lower liquidity should use larger tick spacing to minimize the frequency of allowed ticks being crossed.
 * **Low Volatility / High Liquidity Pairs:** On the other hand, for pools with lower price volatility and/or highly liquid pairs, tick spacing can be smaller, as liquidity providers will have a clearer idea of where to concentrate their liquidity.
+
+## 7. Computing the Current Tick Given sqrtPriceX96
+
+To compute the current tick $i$ directly from `sqrtPriceX96`, we use the relationship between price $p$ and `sqrtPriceX96`:
+
+$$\sqrt{p} = \frac{\text{sqrtPriceX96}}{2^{96}} \implies p = \left(\frac{\text{sqrtPriceX96}}{2^{96}}\right)^2$$
+
+Equating this to the tick-to-price formula $p(i) = 1.0001^i$:
+
+$$1.0001^i = \left(\frac{\text{sqrtPriceX96}}{2^{96}}\right)^2$$
+
+Taking the logarithm of both sides and applying log properties ($\log(x^2) = 2\log(x)$), and recalling that the current tick is rounded down to the nearest integer, the accurate formula for tick $i$ is:
+
+$$i = \left\lfloor \frac{2 \log\left(\frac{\text{sqrtPriceX96}}{2^{96}}\right)}{\log(1.0001)} \right\rfloor$$
+
+Conversely, to compute `sqrtPriceX96` given a tick index $i$, we use:
+
+$$\text{sqrtPriceX96} = \sqrt{1.0001^i} \cdot 2^{96}$$
+
+### Implementation in Solidity (`TickMath` Library)
+In Solidity, the conversion between tick indexes and `sqrtPriceX96` is handled by the `TickMath` library via two core functions:
+* **`getSqrtRatioAtTick(int24 tick)`**: Calculates `sqrtPriceX96` ($\sqrt{1.0001^i} \cdot 2^{96}$) given a tick index $i$.
+* **`getTickAtSqrtRatio(uint160 sqrtPriceX96)`**: Calculates the tick index $i$ given a `sqrtPriceX96` value.
+
+> **Security Warning:** It is **not safe** for external smart contracts to directly consume `slot0.sqrtPriceX96` to determine asset prices for valuation, collateral, or liquidation logic. `Slot0` stores the instantaneous spot price, which can be manipulated within a single transaction via flash loans or sandwich attacks. Protocols should instead rely on Uniswap V3 TWAP (Time-Weighted Average Price) oracles.
