@@ -299,3 +299,41 @@ Depending on where the current pool price ray ($y = px$) lies relative to a posi
 * **Local Uniswap V2 Behavior:** While the current price is inside $[p_a, p_b]$, the active curve segment acts as an independent "mini Uniswap V2 pool" adhering to $x_v \cdot y_v = L^2$.
 * **Reserve Depletion & Inactivity:** As soon as trading pushes the price past $p_b$ or $p_a$, one of the real token reserves depletes entirely to $0$. The segment becomes **inactive**—it no longer facilitates trades or earns swap fees.
 * **Segment Takeover:** The adjacent segment for the neighboring tick range immediately **takes over** as the new active liquidity provider, allowing the pool price to transition seamlessly across ticks without disruption.
+
+## 11. Real Reserves in Uniswap V3
+
+### 1. Core Definitions of Liquidity and Price
+In Uniswap V3, liquidity $L$ and spot price $p$ are fundamental definitions:
+
+$$L^2 = x \cdot y$$
+
+$$p = \frac{y}{x}$$
+
+From these two equations, virtual reserves $x$ and $y$ are expressed in terms of liquidity $L$ and square root price $\sqrt{p}$:
+
+$$x = \frac{L}{\sqrt{p}}$$
+
+$$y = L \sqrt{p}$$
+
+### 2. Derivation of Real Reserves ($x_r, y_r$)
+Real reserves ($x_r, y_r$) represent the actual physical token amounts deposited for a position active in price range $[p_a, p_b]$ (where $p_a \le p \le p_b$). 
+
+Real reserves are calculated as the difference between virtual reserves at the current price $\sqrt{p}$ and the virtual reserves at the respective boundary prices ($\sqrt{p_b}$ for Token X, $\sqrt{p_a}$ for Token Y):
+
+#### Token X Real Reserve ($x_r$):
+$$x_r = x(\sqrt{p}) - x(\sqrt{p_b}) = \frac{L}{\sqrt{p}} - \frac{L}{\sqrt{p_b}} = L \cdot \left( \frac{\sqrt{p_b} - \sqrt{p}}{\sqrt{p} \cdot \sqrt{p_b}} \right)$$
+
+#### Token Y Real Reserve ($y_r$):
+$$y_r = y(\sqrt{p}) - y(\sqrt{p_a}) = L\sqrt{p} - L\sqrt{p_a} = L \cdot (\sqrt{p} - \sqrt{p_a})$$
+
+### 3. Summary of Real Reserve States
+* **$p \le p_a$ (Below Range):** $x_r = L \cdot \left( \frac{\sqrt{p_b} - \sqrt{p_a}}{\sqrt{p_a} \cdot \sqrt{p_b}} \right)$, $y_r = 0$ (100% Token X).
+* **$p_a < p < p_b$ (In Range):** Both $x_r > 0$ and $y_r > 0$ according to the formulas above.
+* **$p \ge p_b$ (Above Range):** $x_r = 0$, $y_r = L \cdot (\sqrt{p_b} - \sqrt{p_a})$ (100% Token Y).
+
+### 4. Implementation in Solidity (`SqrtPriceMath`)
+In Uniswap V3 smart contracts (`SqrtPriceMath.sol`), these real reserve delta formulas are directly implemented as:
+* **`getAmount0Delta` (Token 0 / Token X):** Calculates the required Token 0 amount for a price movement between $\sqrt{p_A}$ and $\sqrt{p_B}$:
+  $$\Delta x = L \cdot \frac{|\sqrt{p_B} - \sqrt{p_A}|}{\sqrt{p_A} \cdot \sqrt{p_B}}$$
+* **`getAmount1Delta` (Token 1 / Token Y):** Calculates the required Token 1 amount for a price movement between $\sqrt{p_A}$ and $\sqrt{p_B}$:
+  $$\Delta y = L \cdot |\sqrt{p_B} - \sqrt{p_A}|$$
