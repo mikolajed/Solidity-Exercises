@@ -417,3 +417,27 @@ function getAmount1Delta(
 
 > **Rounding Direction Safety (`roundUp`):** 
 > The `roundUp` parameter ensures protocol safety: when LPs deposit tokens (minting), amounts round **up** so the pool receives exact or extra tokens; when withdrawing or swapping out, amounts round **down** to prevent pool insolvency.
+
+## 14. Positions in Uniswap V3
+
+### 1. Why the Uniswap V2 Approach Fails in V3
+* **Uniswap V2 Homogeneous Liquidity (ERC-20):** In Uniswap V2, all liquidity is deposited across the uniform range $[0, \infty)$. Because all LPs share identical price exposure, LP shares are completely fungible and can be tracked using standard **ERC-20 tokens**.
+* **Uniswap V3 Concentrated Liquidity (Non-Fungible):** In Uniswap V3, each LP chooses a custom price range $[tickLower, tickUpper]$. Because two LPs can have completely different tick boundaries, their liquidity shares have unique price exposures, fee earnings, and reserve compositions. Fungible ERC-20 LP tokens can no longer represent these heterogeneous deposits.
+
+### 2. Introducing Positions
+To solve this, Uniswap V3 introduces **Positions**. A position represents a specific liquidity commitment bound to a unique price range and owner.
+
+#### Pool Storage Mapping (`UniswapV3Pool.sol`)
+Inside the core pool contract, positions are tracked in a mapping indexed by a hash key of `(owner, tickLower, tickUpper)`:
+
+```solidity
+// Key = keccak256(abi.encodePacked(owner, tickLower, tickUpper))
+mapping(bytes32 => Position.Info) public positions;
+```
+
+#### Periphery NFT Representation (`NonfungiblePositionManager.sol`)
+At the user/periphery level, positions are wrapped and minted as **ERC-721 Non-Fungible Tokens (NFTs)**. Each NFT encapsulates the LP's custom tick range, accumulated fee growth, and active liquidity depth $L$.
+
+### 3. Fee Distribution Mechanism (Uniswap V2 vs. Uniswap V3)
+* **Uniswap V2 Auto-Compounding Fees:** In Uniswap V2, trading fees are automatically added directly into the pool's token reserves, continuously increasing $k$. This increases the underlying token value of each LP share over time, allowing LPs to passively accumulate fees without separate accounting.
+* **Uniswap V3 In-Range Fee Accounting:** In Uniswap V3, fees do not auto-compound into liquidity $L$. Instead, a position is **only entitled to fees from swaps that occurred—partially or entirely—within its specific tick range $[tickLower, tickUpper]$**. When the pool price moves outside a position's tick range, that position earns **zero fees** for the duration of the out-of-range period! Uncollected fees are tracked separately and must be explicitly collected by the position owner.
