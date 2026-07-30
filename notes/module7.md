@@ -337,3 +337,25 @@ In Uniswap V3 smart contracts (`SqrtPriceMath.sol`), these real reserve delta fo
   $$\Delta x = L \cdot \frac{|\sqrt{p_B} - \sqrt{p_A}|}{\sqrt{p_A} \cdot \sqrt{p_B}}$$
 * **`getAmount1Delta` (Token 1 / Token Y):** Calculates the required Token 1 amount for a price movement between $\sqrt{p_A}$ and $\sqrt{p_B}$:
   $$\Delta y = L \cdot |\sqrt{p_B} - \sqrt{p_A}|$$
+
+## 12. The Constant Product Formula in Uniswap V3
+
+While Uniswap V2 uses the classic constant product formula $x \cdot y = k$, Uniswap V3 adapts this formula for concentrated liquidity by substituting virtual reserves ($x_v, y_v$) with real reserves ($x_r, y_r$).
+
+### 1. Shifted Constant Product Invariant Formula
+By substituting virtual reserves $x_v = x_r + \frac{L}{\sqrt{p_u}}$ and $y_v = y_r + L\sqrt{p_l}$ into the virtual invariant equation $x_v \cdot y_v = L^2$, we arrive at the Uniswap V3 shifted constant product formula:
+
+$$L^2 = \left( x_r + \frac{L}{\sqrt{p_u}} \right) \left( y_r + L\sqrt{p_l} \right)$$
+
+where:
+* **$x_r, y_r$**: Real token reserves held in the pool position.
+* **$p_l$**: Lower price boundary ($\sqrt{p_l}$).
+* **$p_u$**: Upper price boundary ($\sqrt{p_u}$).
+* **$L$**: Active liquidity depth of the position.
+
+### 2. Geometric Rationale (Curve Shifting)
+* **Axis Intercepts:** The shifts $\frac{L}{\sqrt{p_u}}$ (on the x-axis) and $L\sqrt{p_l}$ (on the y-axis) move the hyperbola towards the origin.
+* **Boundary Depletion:** 
+  * When $p = p_u$, $x_r = 0$ (all Token X is converted to Token Y).
+  * When $p = p_l$, $y_r = 0$ (all Token Y is converted to Token X).
+* **Capital Efficiency:** By shifting the curve to intersect the axes at finite prices $p_l$ and $p_u$, liquidity providers do not need to deposit tokens to cover price ranges outside $[p_l, p_u]$, maximizing capital efficiency.
