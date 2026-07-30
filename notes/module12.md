@@ -88,3 +88,38 @@ Yes! The proof **is** shorter, and it works because smart contracts do **not** e
 #### `0x0A`: `Point Evaluation Precompile` (EIP-4844 / Dencun Hardfork)
 * **Purpose:** Verifies KZG (Kate-Zaverucha-Goldberg) commitments for blob transactions introduced in Proto-Danksharding.
 * **Behavior:** Given a blob commitment, evaluation point, and ZK proof, `0x0A` **reverts** if the KZG proof is invalid.
+
+## 3. Solidity RSA Signatures for Airdrops and Presales: Beating ECDSA and Merkle Trees in Gas Efficiency
+
+### 1. Whitelisting Trade-offs: Seller Cost vs. Buyer Cost
+When building airdrops, presales, or NFT whitelists, developers must balance on-chain setup gas (seller cost) against verification gas (buyer cost):
+
+* **On-Chain Mappings (`mapping(address => bool)`):**
+  * **Buyer Cost:** Very cheap (~2,100 gas for a single `SLOAD`).
+  * **Seller Cost:** **Extremely expensive** ($O(N)$ transactions). Writing 10,000 whitelisted addresses costs tens of millions of gas ($\sim 20,000$ gas per `SSTORE`), making it impractical for large presales.
+* **Merkle Proofs:**
+  * **Seller Cost:** **0 gas on-chain** (only the 32-byte Merkle root is stored).
+  * **Buyer Cost:** Moderate to high (~30,000–45,000+ gas depending on tree depth $\log_2 N$).
+* **ECDSA Signatures (`ecrecover`):**
+  * **Seller Cost:** **0 gas on-chain** (signatures are generated off-chain).
+  * **Buyer Cost:** Moderate (~30,000 gas).
+
+---
+
+### 2. RSA Signatures via `Modexp` (`0x05`)
+By leveraging Ethereum's Modular Exponentiation precompile (`Modexp` at address `0x05`), RSA signatures can be verified on-chain by evaluating:
+$$m = s^e \pmod N$$
+where $s$ is the signature, $e$ is the public exponent (commonly 65537), and $N$ is the RSA modulus.
+
+When tuned with smaller key sizes, RSA verification via `Modexp` achieves lower gas costs than standard ECDSA `ecrecover` and deep Merkle tree verification!
+
+### 3. RSA Key Size Gas Benchmarks
+
+| RSA Key Size | Execution Gas Cost | Comparison / Use Case |
+| :--- | :--- | :--- |
+| **RSA-896** | **26,850 gas** | Ultra-efficient for temporary presales |
+| **RSA-960** | **26,925 gas** | Highly gas-optimized |
+| **RSA-1024** | **27,033 gas** | Outperforms ECDSA & Merkle proofs |
+| **RSA-2048** | **29,271 gas** | Standard security, competitive with ECDSA |
+
+> **Key Takeaway:** For off-chain signed presales/airdrops, RSA-1024 via the `Modexp` (`0x05`) precompile offers **0 seller setup cost** while delivering **cheaper buyer verification gas (~27,033 gas)** than ECDSA `ecrecover` or Merkle tree proofs!
