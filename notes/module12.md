@@ -46,3 +46,45 @@ Yes! The proof **is** shorter, and it works because smart contracts do **not** e
 * **Domain Separation Prefixes:** Prefix leaf hashes with `0x00` and internal node hashes with `0x01`:
   $$\text{leaf} = \text{keccak256}(0\text{x00} \parallel \text{data})$$
   $$\text{node} = \text{keccak256}(0\text{x01} \parallel H_{\text{left}} \parallel H_{\text{right}})$$
+
+## 2. Ethereum Precompiled Contracts
+
+### 1. Overview & Mechanics
+* **Client-Level Execution:** Precompiled contracts do **not** execute EVM bytecode inside a smart contract. Instead, they are natively implemented inside the Ethereum client specification (e.g., Geth, Reth, Nethermind) for ultra-fast native execution.
+* **Calling Mechanics:** Most precompiles do **not** have a built-in Solidity language wrapper (with `ecrecover` being the sole exception). Developers must invoke them using low-level calls: `address(precompileAddress).staticcall(...)` or inline assembly.
+* **Function Mutability Constraint:** Although no precompile changes storage state, a Solidity wrapper function calling a precompile cannot be declared `pure` because the Solidity compiler cannot statically verify that a `staticcall` will not alter state. Therefore, wrapper functions must be declared `view`.
+* **Cross-Chain Risk:** Smart contract developers must be cautious when deploying to other EVM-compatible chains or L2s, as precompiles and gas schedules may differ from Ethereum mainnet.
+
+---
+
+### 2. Comprehensive Precompile Directory (`0x01` – `0x0A`)
+
+#### `0x01`: `ecRecover`
+* **Purpose:** Recovers the signer's Ethereum address from a message hash and ECDSA digital signature $(v, r, s)$.
+* **Behavior & Security Note:** `ecrecover` **does not revert** on invalid signatures. Instead, it returns `address(0)`. Developers must explicitly check `require(signer != address(0))` to prevent signature forgery vulnerabilities (or use OpenZeppelin's `ECDSA` library).
+
+#### `0x02`: `SHA-256` & `0x03`: `RIPEMD-160`
+* **Purpose:** Hashes input bytes using the SHA-256 and RIPEMD-160 algorithms.
+* **Motivation:** Added to enable cross-chain interoperability with Bitcoin. Bitcoin heavily relies on SHA-256 and uses RIPEMD-160 to compress public keys into Bitcoin addresses (similar to how Ethereum takes the last 20 bytes of a Keccak-256 hash).
+
+#### `0x04`: `Identity`
+* **Purpose:** Copies input data directly to output data (`memcpy`).
+* **Motivation:** The EVM lacks a native memory-copy opcode (`memcopy`), so `0x04` serves as an efficient memory buffer copier.
+
+#### `0x05`: `Modexp` (Modular Exponentiation)
+* **Purpose:** Computes big-integer modular exponentiation $B^E \pmod M$.
+* **Motivation:** ECDSA does not support public-key encryption. Applications requiring asymmetric RSA encryption or RSA signature verification use `0x05`.
+
+#### `0x06`: `ecAdd`, `0x07`: `ecMul`, `0x08`: `ecPairing` (EIP-196 & EIP-197)
+* **Purpose:** Perform Elliptic Curve Addition (`0x06`), Scalar Multiplication (`0x07`), and Bilinear Pairing Checks (`0x08`).
+* **ZK-Cryptography:** Crucial for efficient zero-knowledge proof verification (zk-SNARKs).
+* **Curve Specification:** These precompiles operate exclusively on the **BN-128** (alt_bn128 / Barreto-Naehrig) curve, which is distinct from the `secp256k1` curve used for Ethereum digital signatures.
+* **Gas Repricing (EIP-1108):** Gas costs for `0x06`, `0x07`, and `0x08` were significantly reduced in EIP-1108. Developers should consult EIP-1108 for up-to-date gas schedules rather than the original EIP-196/197 specs.
+
+#### `0x09`: `blake2f` (EIP-152)
+* **Purpose:** Executes the F-compression function of the BLAKE2b cryptographic hash algorithm.
+* **Motivation:** BLAKE2b is the primary hash function used by Zcash. Added to allow Ethereum smart contracts to verify Zcash block headers and transactions.
+
+#### `0x0A`: `Point Evaluation Precompile` (EIP-4844 / Dencun Hardfork)
+* **Purpose:** Verifies KZG (Kate-Zaverucha-Goldberg) commitments for blob transactions introduced in Proto-Danksharding.
+* **Behavior:** Given a blob commitment, evaluation point, and ZK proof, `0x0A` **reverts** if the KZG proof is invalid.
