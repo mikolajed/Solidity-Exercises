@@ -359,3 +359,61 @@ where:
   * When $p = p_u$, $x_r = 0$ (all Token X is converted to Token Y).
   * When $p = p_l$, $y_r = 0$ (all Token Y is converted to Token X).
 * **Capital Efficiency:** By shifting the curve to intersect the axes at finite prices $p_l$ and $p_u$, liquidity providers do not need to deposit tokens to cover price ranges outside $[p_l, p_u]$, maximizing capital efficiency.
+
+## 13. Calculating the Real Reserves Between Two Prices in the Uniswap V3 Codebase
+
+In the Uniswap V3 codebase (`SqrtPriceMath.sol`), calculating real reserves between two prices for a given liquidity depth is handled by two primary helper functions:
+
+### 1. `getAmount0Delta` (Token X Reserve Delta)
+Calculates the real reserves of **Token 0 (Token X)** required or provided between two square root prices $\sqrt{p_A}$ and $\sqrt{p_B}$ for a given liquidity $L$:
+
+$$\Delta x = L \cdot \frac{|\sqrt{p_B} - \sqrt{p_A}|}{\sqrt{p_A} \cdot \sqrt{p_B}}$$
+
+* **Codebase Role:** Computes how much Token 0 must be deposited or withdrawn when price shifts between $\sqrt{p_A}$ and $\sqrt{p_B}$.
+
+### 2. `getAmount1Delta` (Token Y Reserve Delta)
+Calculates the real reserves of **Token 1 (Token Y)** required or provided between two square root prices $\sqrt{p_A}$ and $\sqrt{p_B}$ for a given liquidity $L$:
+
+$$\Delta y = L \cdot |\sqrt{p_B} - \sqrt{p_A}|$$
+
+* **Codebase Role:** Computes how much Token 1 must be deposited or withdrawn when price shifts between $\sqrt{p_A}$ and $\sqrt{p_B}$.
+
+### 3. Solidity Code Snippets (`SqrtPriceMath.sol`)
+
+```solidity
+/// @notice Gets the amount0 delta between two prices for a given liquidity
+function getAmount0Delta(
+    uint160 sqrtRatioAX96,
+    uint160 sqrtRatioBX96,
+    uint128 liquidity,
+    bool roundUp
+) internal pure returns (uint256 amount0) {
+    if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+
+    uint256 numerator1 = uint256(liquidity) << 96;
+    uint256 numerator2 = sqrtRatioBX96 - sqrtRatioAX96;
+
+    return
+        roundUp
+            ? FullMath.mulDivRoundingUp(FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96), 1, sqrtRatioAX96)
+            : FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96) / sqrtRatioAX96;
+}
+
+/// @notice Gets the amount1 delta between two prices for a given liquidity
+function getAmount1Delta(
+    uint160 sqrtRatioAX96,
+    uint160 sqrtRatioBX96,
+    uint128 liquidity,
+    bool roundUp
+) internal pure returns (uint256 amount1) {
+    if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+
+    return
+        roundUp
+            ? FullMath.mulDivRoundingUp(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint96.Q96)
+            : FullMath.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint96.Q96);
+}
+```
+
+> **Rounding Direction Safety (`roundUp`):** 
+> The `roundUp` parameter ensures protocol safety: when LPs deposit tokens (minting), amounts round **up** so the pool receives exact or extra tokens; when withdrawing or swapping out, amounts round **down** to prevent pool insolvency.
